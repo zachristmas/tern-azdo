@@ -85,6 +85,8 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 | Key | Action |
 |---|---|
 | `↑` `↓`, `j` `k`, `PgUp` `PgDn` | Move |
+| `gg` / `G` | First / last |
+| `Ctrl+D` `Ctrl+U`, `d` `u` | Half a screen down / up |
 | `Enter`, double-click | Open |
 | `1` `2` `3`, `Tab` | Reviewing / mine / all |
 | `f`, `Ctrl+F` | Filter (`Esc` clears) |
@@ -99,7 +101,9 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 |---|---|
 | `Tab`, `1` / `2` | Overview / Files |
 | `↑` `↓`, `j` `k` | Pick a file (Overview: scroll) |
-| `PgUp` `PgDn`, `Space` / `u` | Page the diff or the overview |
+| `gg` / `G` | Top / bottom of the overview or diff |
+| `Ctrl+D` `Ctrl+U`, `d` `u` | Half a screen down / up |
+| `Ctrl+F` `Ctrl+B`, `Space`, `PgDn` `PgUp` | A screen down / up |
 | `n` / `p` | Next / previous comment |
 | `x` | Whole file or hunks |
 | `v` then `1` `2` `3` `4` `0` | Approve, with suggestions, wait, reject, reset |

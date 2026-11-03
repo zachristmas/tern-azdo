@@ -352,6 +352,17 @@ struct App {
 	busy:    usize,
 	/// A scroll for Tern to do after the next render.
 	scroll_req: Option<ScrollReq>,
+	/// A `g` was pressed: a second one goes to the top.
+	g_pending:  bool,
+}
+
+/// A vim motion.
+#[derive(Clone, Copy)]
+enum Motion {
+	Top,
+	Bottom,
+	/// A share of a screen, down when positive.
+	Screen(f64),
 }
 
 enum ScrollReq {
@@ -531,6 +542,7 @@ impl App {
 			rx,
 			busy: 0,
 			scroll_req: None,
+			g_pending: false,
 		};
 		if demo {
 			app.client = Some(Arc::new(Client::demo()));
@@ -873,9 +885,9 @@ impl App {
 			s = s.child(ui::seg(self.note.clone()).tone(Tone::Muted));
 		}
 		let keys = if self.page.is_some() {
-			"Esc back · Tab files · j/k scroll · n next comment · a reply · c comment · v vote · o browser · r refresh"
+			"Esc back · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · o browser · r refresh"
 		} else {
-			"Enter open · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit"
+			"Enter open · j/k gg/G · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit"
 		};
 		s.child(ui::seg(keys).side(Side::Right).tone(Tone::Muted))
 	}
@@ -1417,6 +1429,32 @@ impl App {
 			self.compose = Some(Composer::new(ComposeKind::Filter, self.filter.clone()));
 			return true;
 		}
+		// Vim motions: gg and G, Ctrl+D / Ctrl+U (or d / u, as in less) for half a screen, Ctrl+F / Ctrl+B for a screen.
+		let after_g = std::mem::take(&mut self.g_pending);
+		let plain = !key.ctrl && !key.alt && !key.meta;
+		// Tern can report Ctrl as meta, so either counts.
+		let ctl = (key.ctrl || key.meta) && !key.alt;
+		let shift_g = plain && (key.name == "G" || (key.name == "g" && key.shift));
+		if plain && key.name == "g" && !key.shift {
+			if after_g {
+				self.motion(Motion::Top);
+			} else {
+				self.g_pending = true;
+			}
+			return true;
+		}
+		let motion = match key.name.as_str() {
+			_ if shift_g => Some(Motion::Bottom),
+			"d" if plain || ctl => Some(Motion::Screen(0.5)),
+			"u" if plain || ctl => Some(Motion::Screen(-0.5)),
+			"f" if ctl => Some(Motion::Screen(1.0)),
+			"b" if ctl => Some(Motion::Screen(-1.0)),
+			_ => None,
+		};
+		if let Some(m) = motion {
+			self.motion(m);
+			return true;
+		}
 		let url = || self.selected_pr().and_then(|p| Some(self.client.as_ref()?.web_url(p)));
 		match key.name.as_str() {
 			"r" if !key.ctrl => self.refresh(),
@@ -1442,6 +1480,30 @@ impl App {
 			_ => return self.list_key(key),
 		}
 		true
+	}
+
+	/// Moves the list selection, the overview or the diff by a vim motion.
+	fn motion(&mut self, m: Motion) {
+		let Some(p) = &self.page else {
+			let cap = self.rows_in(self.list_lines()) as f64;
+			match m {
+				Motion::Top => self.move_sel(i64::MIN / 2),
+				Motion::Bottom => self.move_sel(i64::MAX / 2),
+				Motion::Screen(f) => self.move_sel(((cap * f.abs()).max(1.0) as i64) * f.signum() as i64),
+			}
+			return;
+		};
+		let files = p.tab == PrTab::Files;
+		match m {
+			Motion::Top => self.scroll(i64::MIN / 2),
+			Motion::Bottom => self.scroll(i64::MAX / 2),
+			Motion::Screen(f) if files => {
+				let step = (self.diff_fit() as f64 * f.abs()).max(1.0) as i64;
+				self.scroll(step * f.signum() as i64);
+			},
+			// One Tern line step is about one text line, so a screen is the body's lines.
+			Motion::Screen(f) => self.scroll_req = Some(ScrollReq::Lines((self.page_body_lines() * 0.9 * f) as i64)),
+		}
 	}
 
 	fn list_key(&mut self, key: &Key) -> bool {
@@ -1480,7 +1542,6 @@ impl App {
 	}
 
 	fn page_key(&mut self, key: &Key) {
-		let h = self.diff_height() as i64;
 		let Some(p) = &mut self.page else { return };
 		let files = p.tab == PrTab::Files;
 		match key.name.as_str() {
@@ -1514,11 +1575,8 @@ impl App {
 			},
 			"down" | "j" => self.scroll(1),
 			"up" | "k" => self.scroll(-1),
-			"page_down" | "space" | "f" => {
-				let step = if files { self.diff_fit() as i64 - 1 } else { h - 2 };
-				self.scroll(step.max(1));
-			},
-			"page_up" | "u" => self.scroll(-(h - 2)),
+			"page_down" | "space" | "f" => self.motion(Motion::Screen(1.0)),
+			"page_up" => self.motion(Motion::Screen(-1.0)),
 			"home" => self.scroll(i64::MIN / 2),
 			"end" => self.scroll(i64::MAX / 2),
 			"n" => self.step_thread(!key.shift),
