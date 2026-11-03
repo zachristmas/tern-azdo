@@ -2,7 +2,7 @@
 //! pull request with its overview, changed files, diffs and comments.
 
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	sync::{
 		Arc,
 		mpsc::{self, Receiver, Sender},
@@ -21,6 +21,7 @@ use crate::{
 	api::{self, Client, Detail, Identity, Pr, Thread},
 	config,
 	diff::{self, FileDiff},
+	tree,
 	worker::{self, Job, Reply, Sides},
 };
 
@@ -94,6 +95,23 @@ const CSS: &str = "\
 .vg{width:14px;text-align:center;font-weight:700;flex-shrink:0}\
 .small{font-size:11.5px}\
 .wi{padding:4px 0}.wk{color:var(--sf-c-accent);font-size:11.5px}\
+.azfv{display:flex;gap:16px;height:100%;overflow:hidden;box-sizing:border-box;padding-top:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
+.aztree{max-height:100%;width:30%;min-width:240px;max-width:420px;flex-shrink:0;box-sizing:border-box;overflow-y:auto;padding:8px 6px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 32%,transparent);border-radius:8px;background:color-mix(in srgb,var(--sf-c-muted) 4%,transparent)}\
+.aztr{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding-right:10px;white-space:nowrap;border-radius:5px;cursor:pointer;overflow:hidden}\
+.aztr:hover{background:color-mix(in srgb,var(--sf-c-muted) 14%,transparent)}\
+.aztr.cur{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
+.azdir{color:var(--sf-c-muted);font-weight:600}\
+.azch{width:12px;text-align:center;flex-shrink:0}\
+.azd0{padding-left:8px}.azd1{padding-left:24px}.azd2{padding-left:40px}.azd3{padding-left:56px}.azd4{padding-left:72px}.azd5{padding-left:88px}.azd6{padding-left:104px}.azd7{padding-left:120px}.azd8{padding-left:136px}.azd9{padding-left:152px}\
+.azdp{max-height:100%;flex:1;min-width:0;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid color-mix(in srgb,var(--sf-c-muted) 32%,transparent);border-radius:8px;overflow:hidden}\
+.azdh{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid color-mix(in srgb,var(--sf-c-muted) 25%,transparent);white-space:nowrap;flex-shrink:0;overflow:hidden}\
+.azds{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 18px;font-family:\"Geist Mono\",ui-monospace,monospace;font-size:12px;line-height:1.35}\
+.azic{margin:12px 8px 16px 44px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45}\
+.azic .card{margin-bottom:0}\
+.azmsg{padding:16px;color:var(--sf-c-muted)}\
+.aztog{display:flex;flex-shrink:0;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);border-radius:6px;overflow:hidden}\
+.aztog span{padding:2px 10px;cursor:pointer;color:var(--sf-c-muted)}\
+.aztog span.on{background:color-mix(in srgb,var(--sf-c-accent) 22%,transparent);color:var(--sf-c-accent)}\
 .strip{height:100%;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;padding-top:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45}";
 
 #[derive(Clone, Debug)]
@@ -105,6 +123,12 @@ enum Msg {
 	ListTab(String),
 	PrTab(String),
 	File(usize),
+	/// A folder row in the file tree: fold or unfold it.
+	Folder(String),
+	/// Side by side (true) or inline.
+	Split(bool),
+	/// The whole file (true) or the changes with context.
+	Full(bool),
 	Thread(u32),
 	Send(String),
 	/// Native editing changed the composer's text.
@@ -152,6 +176,10 @@ enum ComposeKind {
 	Filter,
 	/// A new thread when none, else a reply in that thread.
 	Comment(Option<u32>),
+	/// The line an inline comment goes on.
+	Line,
+	/// An inline comment on a line of the selected file (the old side when `left`).
+	Inline { line: u32, left: bool },
 }
 
 struct Composer {
@@ -248,19 +276,21 @@ struct Page {
 	error:   Option<String>,
 	file:    usize,
 	files:   HashMap<String, FileState>,
-	/// First diff line shown.
-	offset:  usize,
+	/// Diffs side by side.
+	split:   bool,
+	/// Folders folded in the file tree.
+	folded:  HashSet<String>,
 	/// Whole files instead of hunks.
 	full:    bool,
 	/// The selected comment thread.
 	thread:  Option<u32>,
-	/// A thread line to scroll to once the selected file's diff arrives.
+	/// A thread to scroll the diff to once the selected file loads.
 	pending: Option<u32>,
 }
 
 impl Page {
 	fn new(pr: Pr) -> Self {
-		Self { pr, tab: PrTab::Overview, detail: None, error: None, file: 0, files: HashMap::new(), offset: 0, full: false, thread: None, pending: None }
+		Self { pr, tab: PrTab::Overview, detail: None, error: None, file: 0, files: HashMap::new(), split: false, folded: HashSet::new(), full: false, thread: None, pending: None }
 	}
 
 	fn change(&self) -> Option<&api::Change> {
@@ -297,10 +327,6 @@ impl Page {
 		self.timeline().into_iter().filter_map(|i| if let Item::Thread(t) = i { Some(t) } else { None }).collect()
 	}
 
-	fn threads_here(&self) -> Vec<&Thread> {
-		if self.tab == PrTab::Files { self.file_threads() } else { self.all_threads() }
-	}
-
 	/// The code a thread is about (its first five lines at most), with two lines before it: from the diff when those lines changed, else from the file.
 	fn snippet(&self, t: &Thread) -> Option<Vec<Hunk>> {
 		let FileState::Ready { sides, diff } = self.files.get(t.file()?)? else { return None };
@@ -323,12 +349,28 @@ impl Page {
 		Some(vec![Hunk { old_start: Some(first), new_start: Some(first), lines: body }])
 	}
 
-	fn diff(&self) -> Option<&FileDiff> {
-		match self.files.get(self.change()?.path())? {
-			FileState::Ready { diff, .. } => Some(diff),
-			_ => None,
+	/// The selected file has line `n` on its new side (old side when `left`).
+	fn has_line(&self, n: u32, left: bool) -> bool {
+		let Some(c) = self.change() else { return false };
+		match self.files.get(c.path()) {
+			Some(FileState::Ready { sides, .. }) => {
+				let side = if left { &sides.0 } else { &sides.1 };
+				n > 0 && side.as_ref().is_some_and(|t| t.lines().count() >= n as usize)
+			},
+			_ => false,
 		}
 	}
+
+	/// The change paths, in change-list order.
+	fn paths(&self) -> Vec<&str> {
+		self.detail.as_ref().map(|d| d.changes.iter().map(api::Change::path).collect()).unwrap_or_default()
+	}
+
+	/// Whether the selected file's diff is on screen (so its thread cards exist).
+	fn file_ready(&self) -> bool {
+		self.change().is_some_and(|c| matches!(self.files.get(c.path()), Some(FileState::Ready { .. })))
+	}
+
 }
 
 struct App {
@@ -352,6 +394,8 @@ struct App {
 	busy:    usize,
 	/// A scroll for Tern to do after the next render.
 	scroll_req: Option<ScrollReq>,
+	/// A file tree row to bring into view after the next render.
+	tree_req:   Option<String>,
 	/// A `g` was pressed: a second one goes to the top.
 	g_pending:  bool,
 }
@@ -376,6 +420,16 @@ enum ScrollReq {
 /// The overview's scroll container, and a node inside it (for `scroll`, which acts on a node's container).
 const OV_MAIN: &str = "main.pbody.ov.ovm";
 const OV_FIRST: &str = "main.pbody.ov.ovm.status";
+/// The Files tab's file tree, its diff's scroll container, and the node at the diff's top.
+const TREE: &str = "main.pbody.fv.tree";
+const FILES_DS: &str = "main.pbody.fv.dp.ds";
+const FILES_FIRST: &str = "main.pbody.fv.dp.ds.top";
+
+/// A folder row's key: its path hashed, because node ids are dotted and paths can hold dots.
+fn dir_key(path: &str) -> String {
+	let h = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+	format!("d{h:x}")
+}
 
 /// A line of the overview's timeline.
 enum Item<'a> {
@@ -543,6 +597,7 @@ impl App {
 			busy: 0,
 			scroll_req: None,
 			g_pending: false,
+			tree_req: None,
 		};
 		if demo {
 			app.client = Some(Arc::new(Client::demo()));
@@ -686,7 +741,6 @@ impl App {
 					*diff = diff::build(a, b, context);
 				}
 			}
-			p.offset = 0;
 		}
 	}
 
@@ -747,13 +801,8 @@ impl App {
 					};
 					let current = p.change().is_some_and(|c| c.path() == path);
 					p.files.insert(path, state);
-					if current && let Some(line) = p.pending.take() {
-						let h = self.diff_height();
-						if let Some(p) = &mut self.page
-							&& let Some(i) = p.diff().and_then(|d| d.find(u64::from(line)))
-						{
-							p.offset = i.saturating_sub(h / 3);
-						}
+					if current && let Some(id) = p.pending.take() {
+						self.scroll_req = Some(ScrollReq::Reveal(format!("{FILES_DS}.t{id}")));
 					}
 				},
 				Reply::Wrote(id, what, r) => match r {
@@ -792,32 +841,6 @@ impl App {
 		self.avail() - 2.0 - 2.8
 	}
 
-	/// Lines of diff that fit: the body less the thread strip under it.
-	fn diff_height(&self) -> usize {
-		let Some(p) = &self.page else { return 10 };
-		let threads = if p.file_threads().is_empty() { 0.0 } else { self.thread_strip_lines() };
-		// A diff line is a text line; hunk headers and the frame take a few.
-		(self.page_body_lines() - threads - 3.0).max(3.0) as usize
-	}
-
-	/// Chars a diff line holds before it wraps: the pane less the file list and the gutter.
-	fn diff_width(&self) -> usize {
-		(self.cols * 0.64 - 10.0).max(20.0) as usize
-	}
-
-	/// Diff lines that fit from the current offset.
-	fn diff_fit(&self) -> usize {
-		let Some(p) = &self.page else { return 1 };
-		p.diff().map_or(1, |d| d.fit(p.offset, self.diff_height(), self.diff_width()))
-	}
-
-	/// Lines for the comments under a diff: more once a thread is picked, so all of it shows.
-	fn thread_strip_lines(&self) -> f64 {
-		let picked = self.page.as_ref().is_some_and(|p| p.thread.is_some());
-		let share = if picked { 0.6 } else { 0.4 };
-		(self.page_body_lines() * share).clamp(6.0, if picked { 30.0 } else { 18.0 })
-	}
-
 	/// The overview has room for the reviewers beside it.
 	fn wide(&self) -> bool {
 		self.cols >= 130.0
@@ -846,11 +869,16 @@ impl App {
 			dock.push(row.child(html::span("Esc cancels").class("dim")).into());
 		}
 		if let Some(c) = &self.compose {
-			let placeholder = match c.kind {
-				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)",
-				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)",
-				ComposeKind::Comment(None) => "New comment (Enter sends, Shift+Enter new line, Esc cancels)",
-				ComposeKind::Comment(Some(_)) => "Reply (Enter sends, Shift+Enter new line, Esc cancels)",
+			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
+			let placeholder: String = match c.kind {
+				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
+				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
+				ComposeKind::Comment(None) => "New comment on the pull request (Enter sends, Shift+Enter new line, Esc cancels)".into(),
+				ComposeKind::Comment(Some(_)) => "Reply (Enter sends, Shift+Enter new line, Esc cancels)".into(),
+				ComposeKind::Line => format!("Line of {file} to comment on, as numbered in the diff; -12 for a removed line (Enter goes on, Esc cancels)"),
+				ComposeKind::Inline { line, left } => {
+					format!("Comment on {}line {line} of {file} (Enter sends, Shift+Enter new line, Esc cancels)", if left { "removed " } else { "" })
+				},
 			};
 			dock.push(
 				ui::editor()
@@ -879,12 +907,17 @@ impl App {
 		if self.busy > 0 {
 			s = s.child(ui::seg("loading…").tone(Tone::Muted));
 		}
+		// A message takes the key hint's place: the bar drops what does not fit.
 		if let Some(e) = &self.error {
-			s = s.child(ui::seg(first_line(e, 140)).tone(Tone::Error));
-		} else if !self.note.is_empty() {
-			s = s.child(ui::seg(self.note.clone()).tone(Tone::Muted));
+			return s.child(ui::seg(first_line(e, 140)).tone(Tone::Error));
 		}
-		let keys = if self.page.is_some() {
+		if !self.note.is_empty() {
+			return s.child(ui::seg(self.note.clone()));
+		}
+		let files = self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files);
+		let keys = if files {
+			"Esc back · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · s split · x whole file · n next comment · c comment on a line · a reply"
+		} else if self.page.is_some() {
 			"Esc back · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · o browser · r refresh"
 		} else {
 			"Enter open · j/k gg/G · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit"
@@ -1167,166 +1200,229 @@ impl App {
 		ov
 	}
 
-	fn files_view(&self, p: &Page) -> ui::Row<Msg> {
-		let Some(d) = &p.detail else { return ui::row() };
+	fn files_view(&self, p: &Page) -> html::El<Msg> {
+		let Some(d) = &p.detail else { return html::div().key("fv") };
+		if d.changes.is_empty() {
+			return html::div().key("fv").class("azmsg").child(html::span("No files changed."));
+		}
 		let counts: HashMap<&str, usize> = d.threads.iter().filter(|t| t.shown()).filter_map(Thread::file).fold(HashMap::new(), |mut m, f| {
 			*m.entry(f).or_default() += 1;
 			m
 		});
-		let cap = self.rows_in(self.page_body_lines());
-		let first = p.file.saturating_sub(cap.saturating_sub(2)).min(d.changes.len().saturating_sub(cap));
-		let rows = d.changes.iter().enumerate().skip(first).take(cap).map(|(i, c)| {
-			let path = c.path();
-			let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
-			let mut row = html::div()
-				.class(if i == p.file { "row fl cur" } else { "row fl" })
-				.on_click(Msg::File(i))
-				.child(html::span(c.letter()).class(format!("fk {}", c.letter())))
-				.child(html::span(name.to_owned()).class("fn"))
-				.child(html::span(dir.trim_start_matches('/').to_owned()).class("fd"));
-			if let Some(n) = counts.get(path) {
-				row = row.child(html::span(format!("💬{n}")).class("cc"));
+		let paths = p.paths();
+		let rows = tree::rows(&paths, &p.folded).into_iter().map(|r| -> tern_sdk::Node<Msg> {
+			match r {
+				tree::Row::Dir { path, label, depth, open } => html::div()
+					.key(dir_key(&path))
+					.class(format!("aztr azdir azd{}", depth.min(9)))
+					.on_click(Msg::Folder(path))
+					.child(html::span(if open { "▾" } else { "▸" }).class("azch"))
+					.child(html::span(label))
+					.into(),
+				tree::Row::File { index, name, depth } => {
+					let c = &d.changes[index];
+					let mut row = html::div()
+						.key(format!("f{index}"))
+						.class(format!("aztr azd{}{}", depth.min(9), if index == p.file { " cur" } else { "" }))
+						.on_click(Msg::File(index))
+						.child(html::span(c.letter()).class(format!("fk {}", c.letter())))
+						.child(html::span(name).class("fn"));
+					if let Some(n) = counts.get(c.path()) {
+						row = row.child(html::span(format!("💬{n}")).class("cc right"));
+					}
+					row.into()
+				},
 			}
-			row
 		});
-		let list = html::div().class("box").children(rows);
-		let lines = self.page_body_lines();
-		let mut right = ui::col().key("right").grow(1.0).shrink(1.0);
-		let Some(c) = p.change() else {
-			return ui::row().child(html::div().class("box").child(html::span("No files changed.").class("dim")));
-		};
-		let diff_node: tern_sdk::Node<Msg> = match p.files.get(c.path()) {
-			None | Some(FileState::Loading) => html::div().class("box scroll").child(html::span("Loading…").class("dim")).into(),
-			Some(FileState::Failed(e)) => html::div().class("box scroll").child(html::span(e.clone()).class("bad")).into(),
+		html::div().key("fv").class("azfv").child(html::div().key("tree").class("aztree").children(rows)).child(self.diff_pane(p))
+	}
+
+	/// The selected file: its header, then its diff with each comment thread's card under the lines it is about.
+	fn diff_pane(&self, p: &Page) -> html::El<Msg> {
+		let Some(c) = p.change() else { return html::div().key("dp").class("azdp") };
+		let path = c.path();
+		let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+		let mut head = html::div()
+			.class("azdh")
+			.child(html::span(c.letter()).class(format!("fk {}", c.letter())))
+			.child(html::span(name.to_owned()).class("fname"))
+			.child(html::span(dir.trim_start_matches('/').to_owned()).class("dim fdir"));
+		let threads = p.file_threads();
+		let card = |t: &Thread| -> tern_sdk::Node<Msg> { html::div().key(format!("t{}", t.id)).class("azic").child(self.thread_card(p, t, false)).into() };
+		let note = |text: &str| -> tern_sdk::Node<Msg> { html::div().class("azmsg").child(html::span(text.to_owned())).into() };
+		let mut body: Vec<tern_sdk::Node<Msg>> = vec![html::div().key("top").into()];
+		match p.files.get(path) {
+			None | Some(FileState::Loading) => body.push(note("Loading…")),
+			Some(FileState::Failed(e)) => body.push(note(e)),
 			Some(FileState::Ready { sides, diff }) => {
-				if sides.0.is_none() || sides.1.is_none() {
-					html::div().class("box scroll").child(html::span("Binary or very large file: open it in the browser (o).").class("dim")).into()
-				} else if diff.is_empty() {
-					html::div().class("box scroll").child(html::span(if c.is("rename") { "Renamed, no content changes." } else { "No content changes." }).class("dim")).into()
+				if sides.0.is_none() || sides.1.is_none() || diff.is_empty() {
+					body.push(note(if sides.0.is_none() || sides.1.is_none() {
+						"Binary or very large file: open it in the browser (o)."
+					} else if c.is("rename") {
+						"Renamed, no content changes."
+					} else {
+						"No content changes."
+					}));
+					body.extend(threads.iter().map(|t| card(t)));
 				} else {
-					let shown = p.offset.min(diff.len().saturating_sub(1));
-					let h = diff.fit(shown, self.diff_height(), self.diff_width());
-					let end = (shown + h).min(diff.len());
-					let header = html::div().class("head").child(html::span(c.path().trim_start_matches('/').to_owned()).class("who")).child(html::span(format!(
-						"+{} −{} · lines {}-{} of {}{}",
-						diff.added(),
-						diff.removed(),
-						shown + 1,
-						end,
-						diff.len(),
-						if p.full { " · whole file (x)" } else { "" }
-					)).class("dim"));
-					ui::col().child(header).child(ui::diff().key("d").hunks(diff.window(shown, h)).path(c.path().to_owned()).mode(ui::DiffMode::Unified)).into()
+					head = head.child(html::span(format!("+{} −{}", diff.added(), diff.removed())).class("dim"));
+					let mode = if p.split { ui::DiffMode::Split } else { ui::DiffMode::Unified };
+					let mut placed: Vec<(usize, &Thread)> = threads
+						.iter()
+						.map(|t| {
+							let at = t.line().map_or(0, |l| {
+								let l = u64::from(l);
+								diff.anchor(l, t.line_end().map_or(l, u64::from).max(l), t.on_left())
+							});
+							(at, *t)
+						})
+						.collect();
+					placed.sort_by_key(|(at, t)| (*at, t.line()));
+					let (mut from, mut k) = (0, 0);
+					for (at, t) in placed {
+						if at > from {
+							body.push(ui::diff().key(format!("s{k}")).hunks(diff.window(from, at - from)).path(path.to_owned()).mode(mode.clone()).into());
+							k += 1;
+							from = at;
+						}
+						body.push(card(t));
+					}
+					if from < diff.len() {
+						body.push(ui::diff().key(format!("s{k}")).hunks(diff.window(from, diff.len() - from)).path(path.to_owned()).mode(mode.clone()).into());
+					}
 				}
 			},
-		};
-		right = right.child(diff_node);
-		let mut threads = p.file_threads();
-		if !threads.is_empty() {
-			let tl = self.thread_strip_lines();
-			// The picked thread alone, so it is never cut off below the strip.
-			if let Some(t) = p.thread.and_then(|id| threads.iter().find(|t| t.id == id).copied()) {
-				threads = vec![t];
-			}
-			let strip = html::div().class("strip").children(threads.iter().map(|t| self.thread_card(p, t, false)));
-			right = right.child(ui::col().key("threads").min(ui::Bound::h(ui::Extent::Lines(tl))).max(ui::Bound::h(ui::Extent::Lines(tl))).child(strip));
 		}
-		ui::row()
-			.align(ui::Align::Stretch)
-			.min(ui::Bound::h(ui::Extent::Lines(lines)))
-			.max(ui::Bound::h(ui::Extent::Lines(lines)))
-			.child(html::div().class("files").child(list))
-			.child(right)
+		let tog = |on: bool, label: &str, m: Msg| html::span(label.to_owned()).class(if on { "on" } else { "" }).on_click(m);
+		head = head
+			.child(html::div().class("aztog right").child(tog(!p.split, "Inline", Msg::Split(false))).child(tog(p.split, "Side by side", Msg::Split(true))))
+			.child(html::div().class("aztog").child(tog(!p.full, "Changes", Msg::Full(false))).child(tog(p.full, "Whole file", Msg::Full(true))));
+		html::div().key("dp").class("azdp").child(head).child(html::div().key("ds").class("azds").children(body))
 	}
 
 	// ---- input ----------------------------------------------------------------------------------
 
 	/// Moves to the next (or previous) thread here; in Files, scrolls the diff to it.
 	fn step_thread(&mut self, forward: bool) {
-		let h = self.diff_height();
+		let cycle = |at: Option<usize>, n: usize| match (at, forward) {
+			(None, true) => 0,
+			(None, false) => n - 1,
+			(Some(a), true) => (a + 1) % n,
+			(Some(a), false) => (a + n - 1) % n,
+		};
 		let Some(p) = &mut self.page else { return };
-		let ids: Vec<(u32, Option<u32>)> = p.threads_here().iter().map(|t| (t.id, t.line())).collect();
-		let at = p.thread.and_then(|t| ids.iter().position(|(i, _)| *i == t));
-		// In Files, going past this file's last comment moves to the next file that has one.
-		if p.tab == PrTab::Files && forward && at.is_none_or(|a| a + 1 >= ids.len()) {
-			let Some(d) = &p.detail else { return };
-			let has = |i: usize| d.changes.get(i).is_some_and(|c| d.threads.iter().any(|t| t.shown() && t.file() == Some(c.path())));
-			let n = d.changes.len();
-			let start = if ids.is_empty() || at.is_some() { p.file + 1 } else { p.file };
-			let Some(next) = (0..n).map(|k| (start + k) % n).find(|&i| has(i)) else {
-				self.note = "no comments on any file".into();
-				return;
-			};
-			if next != p.file || at.is_some() {
-				self.pick_file(next);
-				let Some(p) = &mut self.page else { return };
-				if let Some(first) = p.file_threads().first().map(|t| (t.id, t.line())) {
-					p.thread = Some(first.0);
-					p.pending = first.1;
-					if let Some(line) = first.1
-						&& let Some(i) = p.diff().and_then(|d| d.find(u64::from(line)))
-					{
-						p.offset = i.saturating_sub(h / 3);
-						p.pending = None;
-					}
-				}
+		if p.tab == PrTab::Overview {
+			let ids: Vec<u32> = p.all_threads().iter().map(|t| t.id).collect();
+			if ids.is_empty() {
+				self.note = "no comments here".into();
 				return;
 			}
-		}
-		if ids.is_empty() {
-			self.note = "no comments here".into();
+			let next = ids[cycle(p.thread.and_then(|t| ids.iter().position(|i| *i == t)), ids.len())];
+			p.thread = Some(next);
+			self.scroll_req = Some(ScrollReq::Reveal(format!("{OV_MAIN}.t{next}")));
 			return;
 		}
-		let next = match (at, forward) {
-			(None, true) => 0,
-			(None, false) => ids.len() - 1,
-			(Some(a), true) => (a + 1) % ids.len(),
-			(Some(a), false) => (a + ids.len() - 1) % ids.len(),
-		};
-		p.thread = Some(ids[next].0);
-		let reveal = (p.tab == PrTab::Overview).then(|| format!("{OV_MAIN}.t{}", ids[next].0));
-		if p.tab == PrTab::Files
-			&& let Some(line) = ids[next].1
-			&& let Some(i) = p.diff().and_then(|d| d.find(u64::from(line)))
-		{
-			p.offset = i.saturating_sub(h / 3);
+		// Files: every file's threads in tree order, then by line; stepping past a file's last opens the next.
+		let Some(d) = &p.detail else { return };
+		let paths = p.paths();
+		let order = tree::order(&paths);
+		let mut all: Vec<(usize, u32)> = Vec::new();
+		for &i in &order {
+			let mut ts: Vec<&Thread> = d.threads.iter().filter(|t| t.shown() && t.file() == Some(paths[i])).collect();
+			ts.sort_by_key(|t| t.line().unwrap_or(0));
+			all.extend(ts.into_iter().map(|t| (i, t.id)));
 		}
-		if let Some(id) = reveal {
-			self.scroll_req = Some(ScrollReq::Reveal(id));
+		if all.is_empty() {
+			self.note = "no comments on any file".into();
+			return;
+		}
+		let pos = |i: usize| order.iter().position(|x| *x == i).unwrap_or(0);
+		let at = p.thread.and_then(|t| all.iter().position(|(_, id)| *id == t));
+		let next = match at {
+			Some(_) => cycle(at, all.len()),
+			// From no thread: the first one in or after this file (or before it, going back).
+			None if forward => all.iter().position(|(i, _)| pos(*i) >= pos(p.file)).unwrap_or(0),
+			None => all.iter().rposition(|(i, _)| pos(*i) <= pos(p.file)).unwrap_or(all.len() - 1),
+		};
+		let (file, id) = all[next];
+		if file != p.file {
+			self.pick_file(file);
+		}
+		let Some(p) = &mut self.page else { return };
+		p.thread = Some(id);
+		if p.file_ready() {
+			self.scroll_req = Some(ScrollReq::Reveal(format!("{FILES_DS}.t{id}")));
+		} else {
+			p.pending = Some(id);
+		}
+	}
+
+	/// The next (or previous) file in the tree, skipping folded folders.
+	fn step_file(&mut self, forward: bool) {
+		let Some(p) = &self.page else { return };
+		let shown: Vec<usize> = tree::rows(&p.paths(), &p.folded)
+			.into_iter()
+			.filter_map(|r| match r {
+				tree::Row::File { index, .. } => Some(index),
+				tree::Row::Dir { .. } => None,
+			})
+			.collect();
+		if shown.is_empty() {
+			return;
+		}
+		let next = match shown.iter().position(|i| *i == p.file) {
+			Some(a) if forward => (a + 1).min(shown.len() - 1),
+			Some(a) => a.saturating_sub(1),
+			None => 0,
+		};
+		self.pick_file(shown[next]);
+	}
+
+	/// Folds (or unfolds) the folder the selected file is in.
+	fn fold_here(&mut self, fold: bool) {
+		let Some(p) = &mut self.page else { return };
+		let parents = tree::parents(&p.paths(), p.file);
+		if fold {
+			if let Some(inner) = parents.last() {
+				p.folded.insert(inner.clone());
+			}
+		} else {
+			for f in &parents {
+				p.folded.remove(f);
+			}
 		}
 	}
 
 	fn scroll(&mut self, delta: i64) {
-		let h = self.diff_height();
-		let Some(p) = &mut self.page else { return };
-		if p.tab == PrTab::Overview {
-			// Tern scrolls the overview itself: a few lines per line key, a screen per page key.
-			// Tern's page step does nothing here, so a page is a screen's worth of line steps.
-			let page = (self.page_body_lines() * 0.8) as i64;
-			self.scroll_req = Some(match delta {
-				d if d <= -10_000 => ScrollReq::By(ScrollBy::Start),
-				d if d >= 10_000 => ScrollReq::By(ScrollBy::End),
-				d if d < -1 => ScrollReq::Lines(-page),
-				d if d > 1 => ScrollReq::Lines(page),
-				d => ScrollReq::Lines(d * 3),
-			});
+		if self.page.is_none() {
 			return;
 		}
-		let len = p.diff().map_or(0, FileDiff::len);
-		let max = len.saturating_sub(h.min(len) / 2);
-		p.offset = (p.offset as i64 + delta).clamp(0, max as i64) as usize;
+		// Tern scrolls the overview and the diff itself. Its page step does nothing here, so a page is a screen's worth of line steps.
+		let page = (self.page_body_lines() * 0.8) as i64;
+		self.scroll_req = Some(match delta {
+			d if d <= -10_000 => ScrollReq::By(ScrollBy::Start),
+			d if d >= 10_000 => ScrollReq::By(ScrollBy::End),
+			d if d < -1 => ScrollReq::Lines(-page),
+			d if d > 1 => ScrollReq::Lines(page),
+			d => ScrollReq::Lines(d * 3),
+		});
 	}
 
 	fn pick_file(&mut self, i: usize) {
-		if let Some(p) = &mut self.page {
-			let n = p.detail.as_ref().map_or(0, |d| d.changes.len());
-			if n == 0 {
-				return;
-			}
-			p.file = i.min(n - 1);
-			p.offset = 0;
-			p.thread = None;
+		let Some(p) = &mut self.page else { return };
+		let n = p.detail.as_ref().map_or(0, |d| d.changes.len());
+		if n == 0 {
+			return;
 		}
+		p.file = i.min(n - 1);
+		p.thread = None;
+		p.pending = None;
+		// Unfold the folders it is in, so its row can be shown.
+		for f in tree::parents(&p.paths(), p.file) {
+			p.folded.remove(&f);
+		}
+		self.tree_req = Some(format!("{TREE}.f{}", p.file));
+		self.scroll_req = Some(ScrollReq::By(ScrollBy::Start));
 		self.load_file();
 	}
 
@@ -1366,6 +1462,39 @@ impl App {
 					self.start(Job::Comment { pr, thread, text: text.trim_end().to_owned() });
 				}
 			},
+			ComposeKind::Line => {
+				let t = text.trim();
+				let (left, num) = match t.strip_prefix('-') {
+					Some(n) => (true, n.trim()),
+					None => (false, t.trim_start_matches('+').trim()),
+				};
+				match num.parse::<u32>().ok().filter(|n| self.page.as_ref().is_some_and(|p| p.has_line(*n, left))) {
+					Some(line) => self.compose = Some(Composer::new(ComposeKind::Inline { line, left }, String::new())),
+					None => {
+						self.note = format!("this file has no {}line {t}", if left { "old " } else { "" });
+						self.compose = Some(Composer::new(ComposeKind::Line, text));
+					},
+				}
+			},
+			ComposeKind::Inline { line, left } => {
+				if text.trim().is_empty() {
+					return;
+				}
+				if let Some(p) = &self.page
+					&& let Some(c) = p.change()
+				{
+					let at = api::LineRef {
+						path: c.path().to_owned(),
+						line,
+						left,
+						iteration: p.detail.as_ref().map_or(1, |d| d.iteration),
+						tracking: c.change_tracking_id,
+					};
+					let job = Job::InlineComment { pr: p.pr.clone(), at, text: text.trim_end().to_owned() };
+					self.note = "sending…".into();
+					self.start(job);
+				}
+			},
 		}
 	}
 
@@ -1385,7 +1514,7 @@ impl App {
 			return true;
 		}
 		let Some(c) = &mut self.compose else { return false };
-		let multiline = matches!(kind, ComposeKind::Comment(_));
+		let multiline = matches!(kind, ComposeKind::Comment(_) | ComposeKind::Inline { .. });
 		if key.name == "enter" {
 			if multiline && (key.shift || key.alt) {
 				c.insert("\n");
@@ -1481,9 +1610,18 @@ impl App {
 		true
 	}
 
+	/// A node inside the scroll container on screen: the overview's, or the diff's when a file shows.
+	fn scroll_anchor(&self) -> Option<&'static str> {
+		let p = self.page.as_ref()?;
+		match p.tab {
+			PrTab::Overview => p.detail.is_some().then_some(OV_FIRST),
+			PrTab::Files => p.change().is_some().then_some(FILES_FIRST),
+		}
+	}
+
 	/// Moves the list selection, the overview or the diff by a vim motion.
 	fn motion(&mut self, m: Motion) {
-		let Some(p) = &self.page else {
+		if self.page.is_none() {
 			let cap = self.rows_in(self.list_lines()) as f64;
 			match m {
 				Motion::Top => self.move_sel(i64::MIN / 2),
@@ -1491,15 +1629,10 @@ impl App {
 				Motion::Screen(f) => self.move_sel(((cap * f.abs()).max(1.0) as i64) * f.signum() as i64),
 			}
 			return;
-		};
-		let files = p.tab == PrTab::Files;
+		}
 		match m {
 			Motion::Top => self.scroll(i64::MIN / 2),
 			Motion::Bottom => self.scroll(i64::MAX / 2),
-			Motion::Screen(f) if files => {
-				let step = (self.diff_fit() as f64 * f.abs()).max(1.0) as i64;
-				self.scroll(step * f.signum() as i64);
-			},
 			// One Tern line step is about one text line, so a screen is the body's lines.
 			Motion::Screen(f) => self.scroll_req = Some(ScrollReq::Lines((self.page_body_lines() * 0.9 * f) as i64)),
 		}
@@ -1564,14 +1697,11 @@ impl App {
 					self.load_file();
 				}
 			},
-			"down" | "j" if files => {
-				let i = p.file + 1;
-				self.pick_file(i);
-			},
-			"up" | "k" if files => {
-				let i = p.file.saturating_sub(1);
-				self.pick_file(i);
-			},
+			"down" | "j" if files => self.step_file(true),
+			"up" | "k" if files => self.step_file(false),
+			"h" | "left" if files => self.fold_here(true),
+			"l" | "right" if files => self.fold_here(false),
+			"s" if files => p.split = !p.split,
 			"down" | "j" => self.scroll(1),
 			"up" | "k" => self.scroll(-1),
 			"page_down" | "space" | "f" => self.motion(Motion::Screen(1.0)),
@@ -1585,6 +1715,13 @@ impl App {
 				self.rebuild_diffs();
 			},
 			"v" => self.voting = true,
+			"c" if files => {
+				if p.file_ready() {
+					self.compose = Some(Composer::new(ComposeKind::Line, String::new()));
+				} else {
+					self.note = "the file is still loading".into();
+				}
+			},
 			"c" => self.compose = Some(Composer::new(ComposeKind::Comment(None), String::new())),
 			"a" => match p.thread {
 				Some(t) => self.compose = Some(Composer::new(ComposeKind::Comment(Some(t)), String::new())),
@@ -1612,6 +1749,26 @@ impl App {
 				self.load_file();
 			},
 			Msg::File(i) => self.pick_file(i),
+			Msg::Folder(path) => {
+				if let Some(p) = &mut self.page
+					&& !p.folded.remove(&path)
+				{
+					p.folded.insert(path);
+				}
+			},
+			Msg::Split(on) => {
+				if let Some(p) = &mut self.page {
+					p.split = on;
+				}
+			},
+			Msg::Full(on) => {
+				if let Some(p) = &mut self.page
+					&& p.full != on
+				{
+					p.full = on;
+					self.rebuild_diffs();
+				}
+			},
 			Msg::Thread(t) => {
 				if let Some(p) = &mut self.page {
 					p.thread = if p.thread == Some(t) { None } else { Some(t) };
@@ -1656,17 +1813,25 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	let mut trace = std::env::var_os("TERN_AZDO_TRACE").and_then(|p| std::fs::File::create(p).ok());
 	loop {
 		session.render(sf, app.view())?;
-		if let Some(req) = app.scroll_req.take() {
-			match req {
+		if let Some(req) = app.scroll_req.take()
+			&& let Some(anchor) = app.scroll_anchor()
+		{
+			let done = match req {
 				ScrollReq::Lines(n) => {
 					let by = if n < 0 { ScrollBy::LineUp } else { ScrollBy::LineDown };
-					for _ in 0..n.unsigned_abs() {
-						session.scroll(sf, OV_FIRST, by)?;
-					}
+					(0..n.unsigned_abs()).try_for_each(|_| session.scroll(sf, anchor, by))
 				},
-				ScrollReq::By(by) => session.scroll(sf, OV_FIRST, by)?,
-				ScrollReq::Reveal(id) => session.reveal(sf, &id, RevealAt::Start)?,
+				ScrollReq::By(by) => session.scroll(sf, anchor, by),
+				ScrollReq::Reveal(id) => session.reveal(sf, &id, RevealAt::Start),
+			};
+			if let Err(e) = done {
+				app.note = format!("could not scroll: {e}");
 			}
+		}
+		if let Some(id) = app.tree_req.take()
+			&& let Err(e) = session.reveal(sf, &id, RevealAt::Nearest)
+		{
+			app.note = format!("could not scroll the file list: {e}");
 		}
 		// After the render, so the composer exists when it takes focus.
 		let want_focus = app.compose.is_some();
@@ -1703,6 +1868,8 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 		match input {
 			Input::Key(key) => {
 				let key = ctrl_from_meta(key);
+				// A note lasts until the next key.
+				app.note.clear();
 				if app.compose.is_some() {
 					app.compose_key(&key);
 				} else if !app.key(&key) {

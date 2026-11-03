@@ -112,6 +112,9 @@ pub struct Change {
 	pub change_type:   String,
 	#[serde(default)]
 	pub original_path: Option<String>,
+	/// Ties a comment to this file across iterations.
+	#[serde(default)]
+	pub change_tracking_id: Option<u32>,
 }
 
 impl Change {
@@ -208,6 +211,17 @@ pub struct Thread {
 	/// The identities `properties` points at, by number.
 	#[serde(default)]
 	pub identities:     Option<HashMap<String, Identity>>,
+}
+
+/// Where an inline comment goes.
+#[derive(Clone, Debug)]
+pub struct LineRef {
+	pub path:      String,
+	pub line:      u32,
+	/// The old side (a removed line).
+	pub left:      bool,
+	pub iteration: u32,
+	pub tracking:  Option<u32>,
 }
 
 /// One line of the timeline from a system thread: who, and what they did.
@@ -365,6 +379,8 @@ pub struct WorkItem {
 /// Everything the PR page shows beyond the list row.
 #[derive(Clone, Debug)]
 pub struct Detail {
+	/// The latest iteration, which the changes are from.
+	pub iteration:  u32,
 	pub changes:    Vec<Change>,
 	pub threads:    Vec<Thread>,
 	pub work_items: Vec<WorkItem>,
@@ -481,7 +497,7 @@ impl Client {
 		changes.sort_by_key(|c| c.path().to_lowercase());
 		let threads: List<Thread> = self.get(&format!("{base}/threads?{API}"))?;
 		let work_items = self.work_items(pr).unwrap_or_default();
-		Ok(Detail { changes, threads: threads.value, work_items })
+		Ok(Detail { iteration: iteration.id, changes, threads: threads.value, work_items })
 	}
 
 	fn work_items(&self, pr: &Pr) -> anyhow::Result<Vec<WorkItem>> {
@@ -541,6 +557,28 @@ impl Client {
 	/// A new top-level comment thread.
 	pub fn comment(&self, pr: &Pr, text: &str) -> anyhow::Result<()> {
 		let body = json!({ "comments": [{ "parentCommentId": 0, "content": text, "commentType": 1 }], "status": 1 });
+		self.call("POST", &format!("{}/threads?{API}", self.pr_url(pr)), Some(&body))?;
+		Ok(())
+	}
+
+	/// A new thread on line `line` of `path`, on the old side when `left`, against the whole PR (base to `iteration`).
+	pub fn inline_comment(&self, pr: &Pr, at: &LineRef, text: &str) -> anyhow::Result<()> {
+		let pos = json!({ "line": at.line, "offset": 1 });
+		let ctx = if at.left {
+			json!({ "filePath": at.path, "leftFileStart": pos, "leftFileEnd": pos })
+		} else {
+			json!({ "filePath": at.path, "rightFileStart": pos, "rightFileEnd": pos })
+		};
+		let mut pr_ctx = json!({ "iterationContext": { "firstComparingIteration": 1, "secondComparingIteration": at.iteration } });
+		if let Some(t) = at.tracking {
+			pr_ctx["changeTrackingId"] = json!(t);
+		}
+		let body = json!({
+			"comments": [{ "parentCommentId": 0, "content": text, "commentType": 1 }],
+			"status": 1,
+			"threadContext": ctx,
+			"pullRequestThreadContext": pr_ctx
+		});
 		self.call("POST", &format!("{}/threads?{API}", self.pr_url(pr)), Some(&body))?;
 		Ok(())
 	}

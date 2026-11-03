@@ -10,6 +10,7 @@ mod clip;
 mod config;
 mod demo;
 mod diff;
+mod tree;
 mod worker;
 
 use std::io::{BufRead, IsTerminal};

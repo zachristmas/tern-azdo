@@ -4,7 +4,7 @@
 use std::sync::{Arc, mpsc::Sender};
 
 use crate::{
-	api::{Client, Detail, Identity, Pr},
+	api::{Client, Detail, Identity, LineRef, Pr},
 	demo,
 };
 
@@ -16,6 +16,8 @@ pub enum Job {
 	/// Both sides of one file.
 	File { pr: Pr, path: String, base: Option<String>, head: Option<String> },
 	Vote { pr: Pr, me: String, vote: i32 },
+	/// A new thread on a line of a file.
+	InlineComment { pr: Pr, at: LineRef, text: String },
 	/// A new thread when `thread` is none, else a reply.
 	Comment { pr: Pr, thread: Option<u32>, text: String },
 }
@@ -46,7 +48,7 @@ fn demo(job: Job) -> Reply {
 			Reply::File(pr.pull_request_id, path, Ok((side(base), side(head))))
 		},
 		Job::Vote { pr, .. } => Reply::Wrote(pr.pull_request_id, "vote (demo, not sent)", Ok(())),
-		Job::Comment { pr, .. } => Reply::Wrote(pr.pull_request_id, "comment (demo, not sent)", Ok(())),
+		Job::Comment { pr, .. } | Job::InlineComment { pr, .. } => Reply::Wrote(pr.pull_request_id, "comment (demo, not sent)", Ok(())),
 	}
 }
 
@@ -72,6 +74,7 @@ pub fn start(client: Arc<Client>, job: Job, tx: Sender<Reply>) {
 				Reply::File(pr.pull_request_id, path, (|| Ok::<_, anyhow::Error>((get(base)?, get(head)?)))().map_err(text))
 			},
 			Job::Vote { pr, me, vote } => Reply::Wrote(pr.pull_request_id, "vote", client.vote(&pr, &me, vote).map_err(text)),
+			Job::InlineComment { pr, at, text: body } => Reply::Wrote(pr.pull_request_id, "comment", client.inline_comment(&pr, &at, &body).map_err(text)),
 			Job::Comment { pr, thread, text: body } => {
 				let r = match thread {
 					Some(t) => client.reply(&pr, t, &body),

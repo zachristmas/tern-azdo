@@ -90,7 +90,8 @@ pub fn detail(pr: &Pr) -> Detail {
 		.map(|(path, kind, _, _)| {
 			serde_json::from_value(json!({
 				"item": { "objectId": format!("new:{path}"), "originalObjectId": format!("old:{path}"), "path": path },
-				"changeType": kind
+				"changeType": kind,
+				"changeTrackingId": path.len()
 			}))
 			.expect("demo change")
 		})
@@ -132,6 +133,7 @@ pub fn detail(pr: &Pr) -> Detail {
 		  "comments": [ comment(1, "Jordan Lee", 0.8, "**Approved.** The staging orders look right for both addresses:\n\n1. Taxable (Austin, TX): 8.25% on each line\n2. Exempt (Portland, OR): no tax lines at all") ] }
 	]);
 	Detail {
+		iteration: 2,
 		changes,
 		threads: serde_json::from_value(threads).unwrap_or_default(),
 		work_items: vec![

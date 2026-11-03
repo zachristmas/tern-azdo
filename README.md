@@ -31,9 +31,9 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 <p align="center"><img src="docs/activity.png" alt="The activity timeline: a comment thread on tax.ts as a card with the code it is about and three comments, each with its author and time" width="900"></p>
 
-**Diffs you can read.** The changed files sit beside a syntax-highlighted diff with real line numbers, paged from the keyboard. Each file's comment threads appear under its diff, and the file list marks which files have comments. `n` jumps to the next comment, moving across files and scrolling the diff to its line. `x` switches between hunks and the whole file.
+**Diffs you can read.** The changed files sit in a folder tree beside a syntax-highlighted diff with real line numbers. Comment threads appear inside the diff, right under the lines they are about, and the tree marks which files have comments. `s` switches between inline and side by side, `x` between changes and the whole file, and the diff scrolls on its own with the vim keys. `n` jumps to the next comment, moving across files. `c` leaves a comment on a line: give the line number as the diff shows it (`-12` for a removed line), then write the comment.
 
-<p align="center"><img src="docs/diff.png" alt="The Files tab: changed files on the left, the diff on the right, and the comment thread for the selected line underneath" width="900"></p>
+<p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files on the left, a side-by-side diff on the right with a comment thread under the lines it is about" width="900"></p>
 
 **Review without leaving.** Vote (approve, approve with suggestions, wait for author, reject), start a comment thread, or reply to one. Open the PR in the browser, or copy its link or source branch.
 
@@ -101,13 +101,15 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 |---|---|
 | `Tab`, `1` / `2` | Overview / Files |
 | `↑` `↓`, `j` `k` | Pick a file (Overview: scroll) |
+| `h` `l`, `←` `→` | Fold / unfold the file's folder |
 | `gg` / `G` | Top / bottom of the overview or diff |
 | `Ctrl+D` `Ctrl+U`, `d` `u` | Half a screen down / up |
 | `Ctrl+F` `Ctrl+B`, `Space`, `PgDn` `PgUp` | A screen down / up |
 | `n` / `p` | Next / previous comment |
-| `x` | Whole file or hunks |
+| `s` | Inline or side by side |
+| `x` | Whole file or changes |
 | `v` then `1` `2` `3` `4` `0` | Approve, with suggestions, wait, reject, reset |
-| `c` / `a` | New comment / reply (`Enter` sends) |
+| `c` / `a` | New comment (Files: on a line) / reply (`Enter` sends) |
 | `Esc` | Leave the thread you are on, then back to the list |
 
 </td></tr>
@@ -123,7 +125,7 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 ## Roadmap
 
 - [ ] Check out the PR branch in a local clone
-- [ ] Comment on a diff line
+- [x] Comment on a diff line
 - [ ] Policy and build status
 - [ ] Complete (merge) and abandon
 - [ ] Commits and iteration-to-iteration diffs

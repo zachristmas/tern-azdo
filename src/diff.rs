@@ -80,23 +80,14 @@ impl FileDiff {
 		(side(|l| l.old), side(|l| l.new))
 	}
 
-	/// How many lines from `offset` fit in `rows` screen rows when a line wraps every `width` chars
-	/// and each hunk break takes a row of its own.
-	pub fn fit(&self, offset: usize, rows: usize, width: usize) -> usize {
-		let width = width.max(20);
-		let mut used = 0;
-		let mut n = 0;
-		let mut hunk = None;
-		for l in self.lines.iter().skip(offset) {
-			let cost = l.text.chars().count().max(1).div_ceil(width) + usize::from(hunk.is_some_and(|h| h != l.hunk));
-			if used + cost > rows && n > 0 {
-				break;
-			}
-			used += cost;
-			n += 1;
-			hunk = Some(l.hunk);
+	/// Where a comment on lines `line..=end` sits in the diff: after the range's last line on its side
+	/// (the old side for `left`), else before the first line past the range, else at the end.
+	pub fn anchor(&self, line: u64, end: u64, left: bool) -> usize {
+		let side = |l: &Line| if left { l.old.filter(|_| l.tag != '+') } else { l.new.filter(|_| l.tag != '-') };
+		if let Some(i) = self.lines.iter().rposition(|l| side(l) == Some(end)) {
+			return i + 1;
 		}
-		n
+		self.lines.iter().position(|l| side(l).is_some_and(|n| n >= line)).unwrap_or(self.lines.len())
 	}
 
 	/// Lines `offset..offset + height` as hunks Tern can draw.
@@ -118,10 +109,6 @@ impl FileDiff {
 		out
 	}
 
-	/// The index of the first line at or after new-side line `line` (old side for removed-only spots).
-	pub fn find(&self, line: u64) -> Option<usize> {
-		self.lines.iter().position(|l| l.new.or(l.old).is_some_and(|n| n >= line))
-	}
 }
 
 #[cfg(test)]
@@ -148,11 +135,31 @@ mod tests {
 	}
 
 	#[test]
+	fn a_comment_sits_after_the_lines_it_is_about() {
+		let d = build("a
+b
+c
+d
+e
+", "a
+b
+C
+d
+e
+", 1);
+		// Lines: " b", "-c", "+C", " d" (new 2, -, 3, 4).
+		assert_eq!(d.anchor(3, 3, false), 3);
+		assert_eq!(d.anchor(3, 3, true), 2);
+		// Line 1 is outside the hunk: before the first line past it.
+		assert_eq!(d.anchor(1, 1, false), 0);
+		assert_eq!(d.anchor(9, 9, false), 4);
+	}
+
+	#[test]
 	fn a_new_file_is_all_additions_from_line_one() {
 		let d = build("", "x\ny\n", 3);
 		let w = d.window(0, 10);
 		assert_eq!(w[0].lines, vec!["+x", "+y"]);
 		assert_eq!(w[0].new_start, Some(1));
-		assert_eq!(d.find(2), Some(1));
 	}
 }
