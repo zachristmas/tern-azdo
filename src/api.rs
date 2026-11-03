@@ -244,15 +244,21 @@ struct List<T> {
 }
 
 pub struct Client {
-	pub org: String,
-	auth:    Auth,
-	agent:   ureq::Agent,
+	pub org:  String,
+	/// Made-up data, no network (`--demo`).
+	pub demo: bool,
+	auth:     Auth,
+	agent:    ureq::Agent,
 }
 
 impl Client {
 	pub fn new(org: &str) -> Self {
 		let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(60)).build();
-		Self { org: org.to_owned(), auth: Auth::new(org), agent }
+		Self { org: org.to_owned(), demo: false, auth: Auth::new(org), agent }
+	}
+
+	pub fn demo() -> Self {
+		Self { demo: true, ..Self::new("https://dev.azure.com/Contoso") }
 	}
 
 	fn call(&self, method: &str, url: &str, body: Option<&Value>) -> anyhow::Result<ureq::Response> {

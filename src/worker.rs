@@ -3,7 +3,10 @@
 
 use std::sync::{Arc, mpsc::Sender};
 
-use crate::api::{Client, Detail, Identity, Pr};
+use crate::{
+	api::{Client, Detail, Identity, Pr},
+	demo,
+};
 
 pub enum Job {
 	/// Who am I, and every active PR in the org.
@@ -32,8 +35,27 @@ fn text(e: anyhow::Error) -> String {
 	format!("{e:#}")
 }
 
+/// The demo's answers, a beat late so loading states still show.
+fn demo(job: Job) -> Reply {
+	std::thread::sleep(std::time::Duration::from_millis(250));
+	match job {
+		Job::Load => Reply::Loaded(Ok((demo::me(), demo::prs()))),
+		Job::Detail(pr) => Reply::Detail(pr.pull_request_id, Ok(Box::new((pr.clone(), demo::detail(&pr))))),
+		Job::File { pr, path, base, head } => {
+			let side = |b: Option<String>| b.map_or(Some(String::new()), |b| demo::blob(&b));
+			Reply::File(pr.pull_request_id, path, Ok((side(base), side(head))))
+		},
+		Job::Vote { pr, .. } => Reply::Wrote(pr.pull_request_id, "vote (demo, not sent)", Ok(())),
+		Job::Comment { pr, .. } => Reply::Wrote(pr.pull_request_id, "comment (demo, not sent)", Ok(())),
+	}
+}
+
 pub fn start(client: Arc<Client>, job: Job, tx: Sender<Reply>) {
 	std::thread::spawn(move || {
+		if client.demo {
+			let _ = tx.send(demo(job));
+			return;
+		}
 		let reply = match job {
 			Job::Load => Reply::Loaded((|| Ok::<_, anyhow::Error>((client.me()?, client.active_prs()?)))().map_err(text)),
 			Job::Detail(pr) => {

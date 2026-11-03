@@ -352,7 +352,7 @@ fn pane_rows() -> Option<f64> {
 }
 
 impl App {
-	fn new(org: Option<String>) -> Self {
+	fn new(org: Option<String>, demo: bool) -> Self {
 		let (tx, rx) = mpsc::channel();
 		let mut app = Self {
 			client: None,
@@ -374,9 +374,14 @@ impl App {
 			rx,
 			busy: 0,
 		};
-		match org {
-			Some(o) => app.connect(&o),
-			None => app.compose = Some(Composer::new(ComposeKind::Org, String::new())),
+		if demo {
+			app.client = Some(Arc::new(Client::demo()));
+			app.refresh();
+		} else {
+			match org {
+				Some(o) => app.connect(&o),
+				None => app.compose = Some(Composer::new(ComposeKind::Org, String::new())),
+			}
 		}
 		app
 	}
@@ -1263,13 +1268,13 @@ impl App {
 	}
 }
 
-pub fn run(org: Option<String>) -> anyhow::Result<()> {
+pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	let Some(mut session) = Session::<Msg>::connect(Options::new().feature(feature::SEND).feature(feature::EDIT))? else {
 		anyhow::bail!("the interactive view needs Tern; use `tern-azdo list` elsewhere");
 	};
 	let sf = session.open(SurfaceOptions::screen().title("Pull Requests").role("azdo"))?;
 	session.stylesheet(sf, "azdo", Some(CSS))?;
-	let mut app = App::new(org);
+	let mut app = App::new(org, demo);
 	let mut focused = false;
 	let mut rows_checked = Instant::now();
 	// TERN_AZDO_TRACE=file logs every input, for seeing what Tern sends.

@@ -1,4 +1,4 @@
-//! `tern-azdo`: the interactive pull request view.
+//! `tern-azdo`: the interactive pull request view (`--demo`: made-up data, no account needed).
 //! `tern-azdo list [review|mine|all]`: the active pull requests as a table.
 //! `tern-azdo org [ORG]`: show or set the organization.
 //! `tern-azdo pat [--forget]`: save a personal access token (read from stdin) instead of using `az`.
@@ -8,6 +8,7 @@ mod app;
 mod auth;
 mod clip;
 mod config;
+mod demo;
 mod diff;
 mod worker;
 
@@ -55,7 +56,8 @@ fn list(which: &str) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
 	let args: Vec<String> = std::env::args().skip(1).collect();
 	match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-		[] => app::run(config::resolve()),
+		[] => app::run(config::resolve(), false),
+		["--demo"] => app::run(None, true),
 		["list"] => list("all"),
 		["list", which @ ("review" | "mine" | "all")] => list(which),
 		["org"] => {
@@ -90,7 +92,7 @@ fn main() -> anyhow::Result<()> {
 			Ok(())
 		},
 		_ => {
-			eprintln!("usage: tern-azdo [list [review|mine|all] | org [ORG] | pat [--forget]]");
+			eprintln!("usage: tern-azdo [--demo | list [review|mine|all] | org [ORG] | pat [--forget]]");
 			std::process::exit(2);
 		},
 	}
