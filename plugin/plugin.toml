@@ -1,0 +1,7 @@
+schema = 1
+id = "azdo"
+name = "Azure DevOps"
+version = "0.1.0"
+description = "Azure DevOps pull requests across every repo in an organization, drawn as native Tern surfaces."
+icon = "git-pull-request"
+window = "window.luau"

@@ -1,0 +1,28 @@
+[package]
+name = "tern-azdo"
+version = "0.1.0"
+edition = "2024"
+description = "Azure DevOps pull requests across every repo in an organization, drawn as native Tern surfaces."
+license = "MIT"
+
+[dependencies]
+tern-sdk = "0.1.0"
+ureq = { version = "2.12", features = ["json"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+similar = "2.7"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+base64 = "0.22"
+urlencoding = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"
+panic = "abort"
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5"
