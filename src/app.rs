@@ -13,8 +13,8 @@ use std::{
 use tern_sdk::{
 	Input, Options, Session, SurfaceOptions,
 	keys::Key,
-	ui::{self, Side, Tone, View, html},
-	wire::{self, Event, feature},
+	ui::{self, Hunk, Side, Tone, View, html},
+	wire::{self, Event, RevealAt, ScrollBy, feature},
 };
 
 use crate::{
@@ -50,13 +50,51 @@ const CSS: &str = "\
 .fd{color:var(--sf-c-muted);overflow:hidden;text-overflow:ellipsis;flex:1}\
 .fn{overflow:hidden;text-overflow:ellipsis}\
 .cc{color:var(--sf-c-accent);font-size:11px}\
-.th{padding:3px 8px;border-radius:4px;white-space:normal;line-height:1.35}\
-.th.cur{background:color-mix(in srgb,var(--sf-c-accent) 18%,transparent)}\
 .who{font-weight:600}\
 .head{font-family:Geist,system-ui,sans-serif;font-size:12.9px;padding:2px 4px;display:flex;gap:10px;align-items:center;white-space:nowrap;overflow:hidden}\
 .title{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis}\
 .prompt{display:flex;gap:14px;align-items:center;height:28px;padding:0 10px;border:1px solid var(--sf-c-accent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
-.prompt .pl{color:var(--sf-c-accent);font-weight:600}";
+.prompt .pl{color:var(--sf-c-accent);font-weight:600}\
+.hsub{gap:8px;padding-top:4px;padding-bottom:6px}\
+.br{font-family:\"Geist Mono\",ui-monospace,monospace;font-size:12px;padding:1px 6px;border-radius:4px;background:color-mix(in srgb,var(--sf-c-accent) 14%,transparent);color:var(--sf-c-accent)}\
+.right{margin-left:auto}\
+.acc{color:var(--sf-c-accent)}\
+.ov{display:flex;gap:16px;height:100%;box-sizing:border-box;padding-top:8px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45;overflow:hidden}\
+.ovmain{flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto;padding-right:6px}\
+.ovside{width:300px;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}\
+.card{flex-shrink:0;margin-bottom:12px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 32%,transparent);border-radius:8px;background:color-mix(in srgb,var(--sf-c-muted) 6%,transparent);padding:12px 16px}\
+.card.cur{border-color:var(--sf-c-accent);background:color-mix(in srgb,var(--sf-c-accent) 7%,transparent)}\
+.ch{font-weight:650;font-size:13.5px;margin-bottom:8px}\
+.grh{color:var(--sf-c-muted);font-size:11.5px;font-weight:600;margin:8px 0 2px}\
+.st{display:flex;align-items:center;gap:10px;padding:3px 0}\
+.gl{width:16px;text-align:center;font-weight:700;flex-shrink:0}\
+.ah{display:flex;align-items:baseline;gap:12px;flex-shrink:0;padding:4px 2px 10px}\
+.at{font-weight:650;font-size:13.5px}\
+.tli{display:flex;gap:12px;flex-shrink:0}\
+.tlr{width:14px;flex-shrink:0;display:flex;flex-direction:column;align-items:center}\
+.tld{width:10px;height:10px;border-radius:5px;margin-top:9px;flex-shrink:0;background:var(--sf-c-muted)}\
+.tld.acc{background:var(--sf-c-accent)}.tld.ok{background:var(--sf-good,#3fb950)}.tld.wait{background:var(--sf-warn,#d29922)}.tld.bad{background:var(--sf-bad,#f85149)}\
+.tls{flex:1;width:2px;margin-top:4px;background:color-mix(in srgb,var(--sf-c-muted) 28%,transparent)}\
+.tlx{flex:1;min-width:0}\
+.ev{display:flex;align-items:center;gap:8px;min-height:28px;margin-bottom:10px;padding:0 4px}\
+.av{width:22px;height:22px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0;line-height:1}\
+.av0{background:#4f5bd5}.av1{background:#b4532a}.av2{background:#0f766e}.av3{background:#9d3fa8}.av4{background:#a16207}.av5{background:#2f6fd6}\
+.name{font-weight:650;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--sf-c-accent) 60%,transparent)}\
+.when{color:var(--sf-c-muted);font-size:11.5px;white-space:nowrap}\
+.thd{display:flex;align-items:center;gap:10px;margin-bottom:10px;white-space:nowrap;overflow:hidden}\
+.fname{font-weight:650}.fdir{overflow:hidden;text-overflow:ellipsis}.ln{color:var(--sf-c-accent);font-size:11.5px;white-space:nowrap}\
+.chip.acc{border-color:var(--sf-c-accent);color:var(--sf-c-accent)}.chip.ok{border-color:var(--sf-good,#3fb950);color:var(--sf-good,#3fb950)}.chip.wait{border-color:var(--sf-warn,#d29922);color:var(--sf-warn,#d29922)}\
+.snip{font-family:\"Geist Mono\",ui-monospace,monospace;font-size:12px;line-height:1.35;margin:0 0 4px;border-radius:6px;overflow:hidden;border:1px solid color-mix(in srgb,var(--sf-c-muted) 25%,transparent)}\
+.cm{display:flex;gap:12px;padding:10px 0 4px}\
+.cm.rep{border-top:1px solid color-mix(in srgb,var(--sf-c-muted) 22%,transparent)}\
+.cmb{flex:1;min-width:0}\
+.cmh{display:flex;align-items:center;gap:10px;margin-bottom:2px}\
+.hint{color:var(--sf-c-muted);font-size:11.5px;padding-top:6px}\
+.rv{display:flex;align-items:center;gap:10px;padding:4px 0}\
+.vg{width:14px;text-align:center;font-weight:700;flex-shrink:0}\
+.small{font-size:11.5px}\
+.wi{padding:4px 0}.wk{color:var(--sf-c-accent);font-size:11.5px}\
+.strip{height:100%;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;padding-top:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45}";
 
 #[derive(Clone, Debug)]
 enum Msg {
@@ -216,15 +254,13 @@ struct Page {
 	full:    bool,
 	/// The selected comment thread.
 	thread:  Option<u32>,
-	/// Overview scroll, in blocks.
-	ov_skip: usize,
 	/// A thread line to scroll to once the selected file's diff arrives.
 	pending: Option<u32>,
 }
 
 impl Page {
 	fn new(pr: Pr) -> Self {
-		Self { pr, tab: PrTab::Overview, detail: None, error: None, file: 0, files: HashMap::new(), offset: 0, full: false, thread: None, ov_skip: 0, pending: None }
+		Self { pr, tab: PrTab::Overview, detail: None, error: None, file: 0, files: HashMap::new(), offset: 0, full: false, thread: None, pending: None }
 	}
 
 	fn change(&self) -> Option<&api::Change> {
@@ -239,13 +275,52 @@ impl Page {
 		t
 	}
 
-	/// Threads not on a file.
-	fn general_threads(&self) -> Vec<&Thread> {
-		self.detail.as_ref().map(|d| d.threads.iter().filter(|t| t.shown() && t.file().is_none()).collect()).unwrap_or_default()
+	/// Everything that happened, newest first: comment threads (by their latest comment), system events and the creation.
+	fn timeline(&self) -> Vec<Item<'_>> {
+		let mut items: Vec<(i64, Item<'_>)> = Vec::new();
+		if let Some(d) = &self.detail {
+			for t in &d.threads {
+				if t.shown() {
+					items.push((stamp(t.latest()), Item::Thread(t)));
+				} else if let Some(e) = t.event() {
+					items.push((stamp(t.started()), Item::Event(e, t.started())));
+				}
+			}
+		}
+		items.push((stamp(&self.pr.creation_date), Item::Created));
+		items.sort_by_key(|i| std::cmp::Reverse(i.0));
+		items.into_iter().map(|(_, i)| i).collect()
+	}
+
+	/// Comment threads in timeline order.
+	fn all_threads(&self) -> Vec<&Thread> {
+		self.timeline().into_iter().filter_map(|i| if let Item::Thread(t) = i { Some(t) } else { None }).collect()
 	}
 
 	fn threads_here(&self) -> Vec<&Thread> {
-		if self.tab == PrTab::Files { self.file_threads() } else { self.general_threads() }
+		if self.tab == PrTab::Files { self.file_threads() } else { self.all_threads() }
+	}
+
+	/// The code a thread is about (its first five lines at most), with two lines before it: from the diff when those lines changed, else from the file.
+	fn snippet(&self, t: &Thread) -> Option<Vec<Hunk>> {
+		let FileState::Ready { sides, diff } = self.files.get(t.file()?)? else { return None };
+		let line = u64::from(t.line()?);
+		let end = u64::from(t.line_end().unwrap_or(0)).clamp(line, line + 4);
+		let left = t.on_left();
+		let at = diff.lines.iter().position(|l| if left { l.old == Some(line) && l.tag != '+' } else { l.new == Some(line) && l.tag != '-' });
+		if let Some(i) = at {
+			let start = i.saturating_sub(2);
+			return Some(diff.window(start, i - start + (end - line) as usize + 1));
+		}
+		let text = if left { sides.0.as_ref()? } else { sides.1.as_ref()? };
+		let lines: Vec<&str> = text.lines().collect();
+		let first = line.saturating_sub(2).max(1);
+		let last = end.min(lines.len() as u64);
+		if first > last {
+			return None;
+		}
+		let body = (first..=last).map(|n| format!(" {}", lines[n as usize - 1])).collect();
+		Some(vec![Hunk { old_start: Some(first), new_start: Some(first), lines: body }])
 	}
 
 	fn diff(&self) -> Option<&FileDiff> {
@@ -275,6 +350,88 @@ struct App {
 	tx:      Sender<Reply>,
 	rx:      Receiver<Reply>,
 	busy:    usize,
+	/// A scroll for Tern to do after the next render.
+	scroll_req: Option<ScrollReq>,
+}
+
+enum ScrollReq {
+	By(ScrollBy),
+	/// Lines down (up when negative).
+	Lines(i64),
+	/// Bring a node to the top of the overview.
+	Reveal(String),
+}
+
+/// The overview's scroll container, and a node inside it (for `scroll`, which acts on a node's container).
+const OV_MAIN: &str = "main.pbody.ov.ovm";
+const OV_FIRST: &str = "main.pbody.ov.ovm.status";
+
+/// A line of the overview's timeline.
+enum Item<'a> {
+	Thread(&'a Thread),
+	/// A system event and when it happened.
+	Event(api::Event, &'a str),
+	Created,
+}
+
+/// Milliseconds since the epoch for an RFC 3339 time (0 when it does not parse).
+fn stamp(when: &str) -> i64 {
+	chrono::DateTime::parse_from_rfc3339(when).map_or(0, |t| t.timestamp_millis())
+}
+
+/// `just now`, `12m ago`, `5h ago`, `yesterday`, `3d ago`, then the date.
+fn ago(when: &str) -> String {
+	let Ok(t) = chrono::DateTime::parse_from_rfc3339(when) else { return String::new() };
+	let secs = (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds().max(0);
+	match secs {
+		s if s < 60 => "just now".into(),
+		s if s < 3600 => format!("{}m ago", s / 60),
+		s if s < 86_400 => format!("{}h ago", s / 3600),
+		s if s < 86_400 * 2 => "yesterday".into(),
+		s if s < 86_400 * 30 => format!("{}d ago", s / 86_400),
+		_ => t.with_timezone(&chrono::Local).format("%b %-d, %Y").to_string(),
+	}
+}
+
+/// The full local time, shown on hover.
+fn when_full(when: &str) -> String {
+	chrono::DateTime::parse_from_rfc3339(when).map(|t| t.with_timezone(&chrono::Local).format("%a %b %-d, %Y at %-I:%M %p").to_string()).unwrap_or_default()
+}
+
+/// `PS` for Priya Shah.
+fn initials(name: &str) -> String {
+	let mut words = name.split_whitespace().filter_map(|w| w.chars().find(|c| c.is_alphanumeric()));
+	let first = words.next();
+	let last = words.next_back();
+	[first, last].into_iter().flatten().flat_map(char::to_uppercase).collect()
+}
+
+/// A round badge with someone's initials, the same color for the same name everywhere.
+fn avatar(name: &str) -> html::El<Msg> {
+	let h = name.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)));
+	html::span(initials(name)).class(format!("av av{}", h % 6)).title(name.to_owned())
+}
+
+fn person(name: &str) -> html::El<Msg> {
+	html::span(name.to_owned()).class("name")
+}
+
+fn time(when: &str, extra: &str) -> html::El<Msg> {
+	html::span(ago(when)).class(format!("when {extra}")).title(when_full(when))
+}
+
+/// A timeline entry: a dot and the line down to the next entry, then the entry.
+fn tl_item(dot: &str, last: bool, body: html::El<Msg>) -> html::El<Msg> {
+	let mut rail = html::div().class("tlr").child(html::div().class(format!("tld {dot}")));
+	if !last {
+		rail = rail.child(html::div().class("tls"));
+	}
+	html::div().class("tli").child(rail).child(html::div().class("tlx").child(body))
+}
+
+/// One line of the timeline: who did what, and when.
+fn event_row(who: &str, what: &str, when: &str) -> html::El<Msg> {
+	html::div().class("ev").child(avatar(who)).child(person(who)).child(html::span(what.to_owned())).child(time(when, "right"))
 }
 
 /// `3d`, `5h`, `12m` since an RFC 3339 time.
@@ -295,7 +452,7 @@ fn vote_glyph(vote: i32) -> (&'static str, &'static str) {
 		5 => ("✓", "ok"),
 		-5 => ("⏸", "wait"),
 		-10 => ("✗", "bad"),
-		_ => ("·", "dim"),
+		_ => ("○", "dim"),
 	}
 }
 
@@ -373,6 +530,7 @@ impl App {
 			tx,
 			rx,
 			busy: 0,
+			scroll_req: None,
 		};
 		if demo {
 			app.client = Some(Arc::new(Client::demo()));
@@ -477,8 +635,25 @@ impl App {
 
 	/// Loads the selected file's sides if they are not loaded yet.
 	fn load_file(&mut self) {
+		if let Some(i) = self.page.as_ref().map(|p| p.file) {
+			self.load_change(i);
+		}
+	}
+
+	/// Loads every file that has comments, so the overview can show the code each one is about.
+	fn prefetch_threads(&mut self) {
+		let Some(d) = self.page.as_ref().and_then(|p| p.detail.as_ref()) else { return };
+		let want: Vec<usize> =
+			d.changes.iter().enumerate().filter(|(_, c)| d.threads.iter().any(|t| t.shown() && t.file() == Some(c.path()))).map(|(i, _)| i).collect();
+		for i in want {
+			self.load_change(i);
+		}
+	}
+
+	/// Loads change `i`'s sides if they are not loaded yet.
+	fn load_change(&mut self, i: usize) {
 		let Some(p) = &self.page else { return };
-		let Some(c) = p.change() else { return };
+		let Some(c) = p.detail.as_ref().and_then(|d| d.changes.get(i)) else { return };
 		let path = c.path().to_owned();
 		if p.files.contains_key(&path) {
 			return;
@@ -545,6 +720,7 @@ impl App {
 					if self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files) {
 						self.load_file();
 					}
+					self.prefetch_threads();
 				},
 				Reply::File(id, path, r) => {
 					let Some(p) = self.page.as_mut().filter(|p| p.pr.pull_request_id == id) else { continue };
@@ -623,9 +799,18 @@ impl App {
 		p.diff().map_or(1, |d| d.fit(p.offset, self.diff_height(), self.diff_width()))
 	}
 
+	/// Lines for the comments under a diff: more once a thread is picked, so all of it shows.
 	fn thread_strip_lines(&self) -> f64 {
-		(self.page_body_lines() * 0.3).clamp(4.0, 12.0)
+		let picked = self.page.as_ref().is_some_and(|p| p.thread.is_some());
+		let share = if picked { 0.6 } else { 0.4 };
+		(self.page_body_lines() * share).clamp(6.0, if picked { 30.0 } else { 18.0 })
 	}
+
+	/// The overview has room for the reviewers beside it.
+	fn wide(&self) -> bool {
+		self.cols >= 130.0
+	}
+
 
 	// ---- views ----------------------------------------------------------------------------------
 
@@ -688,7 +873,7 @@ impl App {
 			s = s.child(ui::seg(self.note.clone()).tone(Tone::Muted));
 		}
 		let keys = if self.page.is_some() {
-			"Esc back · Tab files · v vote · c comment · a reply · o browser · r refresh"
+			"Esc back · Tab files · j/k scroll · n next comment · a reply · c comment · v vote · o browser · r refresh"
 		} else {
 			"Enter open · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit"
 		};
@@ -768,15 +953,17 @@ impl App {
 		if let Some(m) = pr.merge_status.as_deref().filter(|m| *m == "conflicts" || *m == "failure") {
 			head = head.child(html::span(if m == "conflicts" { "conflicts" } else { "merge failed" }).class("chip bad"));
 		}
-		let sub = html::div().class("head").child(html::span(format!(
-			"{} wants to merge {} into {} · {} / {} · {}",
-			pr.created_by.display_name,
-			pr.source(),
-			pr.target(),
-			pr.repository.project.name,
-			pr.repository.name,
-			age(&pr.creation_date)
-		)).class("dim"));
+		let sub = html::div()
+			.class("head hsub")
+			.child(avatar(&pr.created_by.display_name))
+			.child(person(&pr.created_by.display_name))
+			.child(html::span("wants to merge").class("dim"))
+			.child(html::span(pr.source().to_owned()).class("br"))
+			.child(html::span("into").class("dim"))
+			.child(html::span(pr.target().to_owned()).class("br"))
+			.child(html::span(format!("{} / {}", pr.repository.project.name, pr.repository.name)).class("dim right"))
+			.child(html::span("·").class("dim"))
+			.child(time(&pr.creation_date, ""));
 		let files = p.detail.as_ref().map_or(0, |d| d.changes.len());
 		let tabs = ui::tabs()
 			.key("ptabs")
@@ -801,66 +988,171 @@ impl App {
 			.child(ui::col().key("pbody").min(ui::Bound::h(ui::Extent::Lines(lines))).max(ui::Bound::h(ui::Extent::Lines(lines))).child(body))
 	}
 
-	fn thread_node(&self, t: &Thread, selected: bool, with_line: bool) -> html::El<Msg> {
-		let mut node = html::div().class(if selected { "th cur" } else { "th" }).on_click(Msg::Thread(t.id));
-		let mut head = html::div();
-		if with_line && let Some(l) = t.line() {
-			head = head.child(html::span(format!("L{l}  ")).class("cc"));
+	/// A comment thread as a card: where it is, the code it is about, then every comment in full.
+	fn thread_card(&self, p: &Page, t: &Thread, with_code: bool) -> html::El<Msg> {
+		let selected = p.thread == Some(t.id);
+		let (label, tone) = api::status_label(t.status.as_deref());
+		let mut head = html::div().class("thd");
+		if let Some(path) = t.file() {
+			let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
+			head = head.child(html::span(file.to_owned()).class("fname")).child(html::span(dir.trim_start_matches('/').to_owned()).class("dim fdir"));
+			if let (Some(a), Some(b)) = (t.line(), t.line_end()) {
+				head = head.child(html::span(if b > a { format!("lines {a}-{b}") } else { format!("line {a}") }).class("ln"));
+			}
+		} else {
+			head = head.child(html::span("Comment on the pull request").class("dim"));
 		}
-		head = head.child(html::span(t.status.clone().unwrap_or_else(|| "active".into())).class(if t.is_open() { "chip" } else { "chip dim" }));
-		node = node.child(head);
-		let comments: Vec<_> = t.human().collect();
-		let shown: Vec<_> = if selected { comments.clone() } else { comments.iter().take(1).copied().collect() };
-		for c in shown {
-			let text = c.content.clone().unwrap_or_default();
-			node = node.child(
+		head = head.child(html::span(label).class(format!("chip {tone} right")));
+		let mut card = html::div().class(if selected { "card cur" } else { "card" }).on_click(Msg::Thread(t.id)).child(head);
+		if with_code && let Some(hunks) = p.snippet(t) {
+			let diff = ui::diff().key(format!("sn{}", t.id)).hunks(hunks).path(t.file().unwrap_or_default().to_owned()).mode(ui::DiffMode::Unified);
+			card = card.child(html::div().class("snip").child(diff));
+		}
+		for (i, c) in t.human().enumerate() {
+			let when = c.published_date.as_deref().unwrap_or("");
+			let mut meta = html::div().class("cmh").child(person(&c.author.display_name)).child(time(when, ""));
+			if c.last_content_updated_date.as_deref().is_some_and(|u| stamp(u) - stamp(when) > 60_000) {
+				meta = meta.child(html::span("edited").class("when"));
+			}
+			let body = html::div().class("cmb").child(meta).child(ui::md(c.content.clone().unwrap_or_default()));
+			card = card.child(html::div().class(if i == 0 { "cm" } else { "cm rep" }).child(avatar(&c.author.display_name)).child(body));
+		}
+		if selected {
+			card = card.child(html::div().class("hint").child(html::span("a reply · n next · Esc done")));
+		}
+		card
+	}
+
+	/// Where the PR stands: votes, conflicts, open comments.
+	fn status_card(&self, p: &Page) -> html::El<Msg> {
+		let pr = &p.pr;
+		let names = |pick: &dyn Fn(&api::Reviewer) -> bool| pr.reviewers.iter().filter(|r| pick(r)).map(|r| r.display_name.as_str()).collect::<Vec<_>>();
+		let mut rows: Vec<(&str, &str, String)> = Vec::new();
+		if pr.is_draft {
+			rows.push(("✎", "dim", "Draft: not ready for review yet".into()));
+		}
+		let rejected = names(&|r| r.vote == -10);
+		if !rejected.is_empty() {
+			rows.push(("✗", "bad", format!("Rejected by {}", rejected.join(", "))));
+		}
+		let waiting = names(&|r| r.vote == -5);
+		if !waiting.is_empty() {
+			rows.push(("⏸", "wait", format!("{} {} waiting for the author", waiting.join(", "), if waiting.len() == 1 { "is" } else { "are" })));
+		}
+		let required = names(&|r| r.is_required && r.vote < 5);
+		if !required.is_empty() {
+			rows.push(("○", "wait", format!("Waiting on {} (required)", required.join(", "))));
+		}
+		rows.push(match pr.reviewers.iter().filter(|r| r.vote >= 5).count() {
+			0 => ("○", "dim", "No approvals yet".into()),
+			1 => ("✓", "ok", "1 reviewer approved".into()),
+			n => ("✓", "ok", format!("{n} reviewers approved")),
+		});
+		rows.push(match pr.merge_status.as_deref() {
+			Some("conflicts") => ("✗", "bad", "Merge conflicts with the target branch".into()),
+			Some("failure") => ("✗", "bad", "The merge check failed".into()),
+			Some("succeeded") => ("✓", "ok", "No merge conflicts".into()),
+			_ => ("○", "dim", "Checking for merge conflicts".into()),
+		});
+		let threads = p.all_threads();
+		let open = threads.iter().filter(|t| t.is_open()).count();
+		if !threads.is_empty() {
+			rows.push(if open == 0 {
+				("✓", "ok", "All comments resolved".into())
+			} else {
+				("●", "acc", format!("{open} of {} comment threads active", threads.len()))
+			});
+		}
+		html::div().class("card").children(
+			rows.into_iter().map(|(g, class, text)| html::div().class("st").child(html::span(g).class(format!("gl {class}"))).child(html::span(text))),
+		)
+	}
+
+	fn reviewers_card(&self, pr: &Pr) -> html::El<Msg> {
+		let mut card = html::div().class("card").child(html::div().class("ch").child(html::span("Reviewers")));
+		if pr.reviewers.is_empty() {
+			return card.child(html::span("No reviewers").class("dim"));
+		}
+		let mut rs: Vec<&api::Reviewer> = pr.reviewers.iter().collect();
+		rs.sort_by_key(|r| r.display_name.to_lowercase());
+		for (label, required) in [("Required", true), ("Optional", false)] {
+			let group: Vec<_> = rs.iter().filter(|r| r.is_required == required).collect();
+			if group.is_empty() {
+				continue;
+			}
+			card = card.child(html::div().class("grh").child(html::span(label)));
+			for r in group {
+				let (g, class) = vote_glyph(r.vote);
+				let who = html::div().child(html::div().child(html::span(r.display_name.clone()))).child(html::div().class("dim small").child(html::span(api::vote_label(r.vote))));
+				card = card.child(html::div().class("rv").child(html::span(g).class(format!("vg {class}"))).child(avatar(&r.display_name)).child(who));
+			}
+		}
+		card
+	}
+
+	fn work_items_card(&self, p: &Page) -> Option<html::El<Msg>> {
+		let d = p.detail.as_ref().filter(|d| !d.work_items.is_empty())?;
+		let mut card = html::div().class("card").child(html::div().class("ch").child(html::span("Work items")));
+		for w in &d.work_items {
+			let tone = match w.state.as_str() {
+				"Closed" | "Done" | "Resolved" | "Removed" => "ok",
+				"New" | "To Do" => "dim",
+				_ => "acc",
+			};
+			card = card.child(
 				html::div()
-					.child(html::span(format!("{}: ", c.author.display_name)).class("who"))
-					.child(html::span(if selected { text } else { first_line(&text, 160) })),
+					.class("wi")
+					.child(html::div().child(html::span(format!("{} {}", w.kind, w.id)).class("wk")))
+					.child(html::div().child(html::span(w.title.clone())))
+					.child(html::div().class("small").child(html::span("● ").class(tone)).child(html::span(w.state.clone()).class("dim"))),
 			);
 		}
-		if !selected && comments.len() > 1 {
-			node = node.child(html::span(format!("{} more", comments.len() - 1)).class("dim"));
-		}
-		node
+		Some(card)
 	}
 
 	fn overview(&self, p: &Page) -> html::El<Msg> {
 		let pr = &p.pr;
-		let d = p.detail.as_ref();
-		let mut blocks: Vec<tern_sdk::Node<Msg>> = Vec::new();
-		let mut reviewers = ui::kv();
-		let mut rs = pr.reviewers.clone();
-		rs.sort_by_key(|r| (!r.is_required, r.is_container, r.display_name.to_lowercase()));
-		for r in &rs {
-			let (g, _) = vote_glyph(r.vote);
-			let who = format!("{}{}", r.display_name, if r.is_required { " (required)" } else { "" });
-			reviewers = reviewers.item(who, format!("{g} {}", api::vote_label(r.vote)));
-		}
-		blocks.push(ui::section().head(format!("Reviewers ({})", pr.reviewers.len())).child(reviewers).into());
-		if let Some(d) = d.filter(|d| !d.work_items.is_empty()) {
-			let mut wi = ui::kv();
-			for w in &d.work_items {
-				wi = wi.item(format!("{} {}", w.kind, w.id), format!("{} ({})", w.title, w.state));
+		let wide = self.wide();
+		let mut blocks: Vec<tern_sdk::Node<Msg>> = vec![self.status_card(p).key("status").into()];
+		if !wide {
+			blocks.push(self.reviewers_card(pr).into());
+			if let Some(w) = self.work_items_card(p) {
+				blocks.push(w.into());
 			}
-			blocks.push(ui::section().head(format!("Work items ({})", d.work_items.len())).child(wi).into());
 		}
 		let desc = pr.description.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "_No description._".into());
-		blocks.push(ui::section().head("Description").child(ui::md(desc)).into());
-		let threads = p.general_threads();
-		if !threads.is_empty() {
-			let mut sec = ui::section().head(format!("Comments ({})", threads.len()));
-			for t in threads {
-				sec = sec.child(self.thread_node(t, p.thread == Some(t.id), false));
-			}
-			blocks.push(sec.into());
+		blocks.push(html::div().class("card").child(html::div().class("ch").child(html::span("Description"))).child(ui::md(desc)).into());
+		blocks.push(
+			html::div()
+				.class("ah")
+				.child(html::span("Activity").class("at"))
+				.child(html::span("newest first · n jumps between comments · c adds one").class("dim small"))
+				.into(),
+		);
+		let items = p.timeline();
+		let n = items.len();
+		for (i, item) in items.iter().enumerate() {
+			let last = i + 1 == n;
+			let node = match item {
+				Item::Thread(t) => tl_item(if t.is_open() { "acc" } else { "ok" }, last, self.thread_card(p, t, true)).key(format!("t{}", t.id)),
+				Item::Event(e, when) => {
+					let dot = match e.vote {
+						Some(10 | 5) => "ok",
+						Some(-5) => "wait",
+						Some(-10) => "bad",
+						_ => "",
+					};
+					tl_item(dot, last, event_row(&e.who, &e.what, when))
+				},
+				Item::Created => tl_item("acc", last, event_row(&pr.created_by.display_name, "created the pull request", &pr.creation_date)),
+			};
+			blocks.push(node.into());
 		}
-		let file_threads = d.map_or(0, |d| d.threads.iter().filter(|t| t.shown() && t.file().is_some()).count());
-		if file_threads > 0 {
-			blocks.push(html::div().child(html::span(format!("{file_threads} comment threads on files: see the Files tab.")).class("dim")).into());
+		let mut ov = html::div().key("ov").class("ov").child(html::div().key("ovm").class("ovmain").children(blocks));
+		if wide {
+			ov = ov.child(html::div().class("ovside").child(self.reviewers_card(pr)).children(self.work_items_card(p)));
 		}
-		let skip = p.ov_skip.min(blocks.len().saturating_sub(1));
-		html::div().class("box scroll").children(blocks.into_iter().skip(skip))
+		ov
 	}
 
 	fn files_view(&self, p: &Page) -> ui::Row<Msg> {
@@ -917,10 +1209,14 @@ impl App {
 			},
 		};
 		right = right.child(diff_node);
-		let threads = p.file_threads();
+		let mut threads = p.file_threads();
 		if !threads.is_empty() {
 			let tl = self.thread_strip_lines();
-			let strip = html::div().class("box scroll").children(threads.iter().map(|t| self.thread_node(t, p.thread == Some(t.id), true)));
+			// The picked thread alone, so it is never cut off below the strip.
+			if let Some(t) = p.thread.and_then(|id| threads.iter().find(|t| t.id == id).copied()) {
+				threads = vec![t];
+			}
+			let strip = html::div().class("strip").children(threads.iter().map(|t| self.thread_card(p, t, false)));
 			right = right.child(ui::col().key("threads").min(ui::Bound::h(ui::Extent::Lines(tl))).max(ui::Bound::h(ui::Extent::Lines(tl))).child(strip));
 		}
 		ui::row()
@@ -976,11 +1272,15 @@ impl App {
 			(Some(a), false) => (a + ids.len() - 1) % ids.len(),
 		};
 		p.thread = Some(ids[next].0);
+		let reveal = (p.tab == PrTab::Overview).then(|| format!("{OV_MAIN}.t{}", ids[next].0));
 		if p.tab == PrTab::Files
 			&& let Some(line) = ids[next].1
 			&& let Some(i) = p.diff().and_then(|d| d.find(u64::from(line)))
 		{
 			p.offset = i.saturating_sub(h / 3);
+		}
+		if let Some(id) = reveal {
+			self.scroll_req = Some(ScrollReq::Reveal(id));
 		}
 	}
 
@@ -988,7 +1288,16 @@ impl App {
 		let h = self.diff_height();
 		let Some(p) = &mut self.page else { return };
 		if p.tab == PrTab::Overview {
-			p.ov_skip = (p.ov_skip as i64 + delta.signum()).max(0) as usize;
+			// Tern scrolls the overview itself: a few lines per line key, a screen per page key.
+			// Tern's page step does nothing here, so a page is a screen's worth of line steps.
+			let page = (self.page_body_lines() * 0.8) as i64;
+			self.scroll_req = Some(match delta {
+				d if d <= -10_000 => ScrollReq::By(ScrollBy::Start),
+				d if d >= 10_000 => ScrollReq::By(ScrollBy::End),
+				d if d < -1 => ScrollReq::Lines(-page),
+				d if d > 1 => ScrollReq::Lines(page),
+				d => ScrollReq::Lines(d * 3),
+			});
 			return;
 		}
 		let len = p.diff().map_or(0, FileDiff::len);
@@ -1281,6 +1590,18 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	let mut trace = std::env::var_os("TERN_AZDO_TRACE").and_then(|p| std::fs::File::create(p).ok());
 	loop {
 		session.render(sf, app.view())?;
+		if let Some(req) = app.scroll_req.take() {
+			match req {
+				ScrollReq::Lines(n) => {
+					let by = if n < 0 { ScrollBy::LineUp } else { ScrollBy::LineDown };
+					for _ in 0..n.unsigned_abs() {
+						session.scroll(sf, OV_FIRST, by)?;
+					}
+				},
+				ScrollReq::By(by) => session.scroll(sf, OV_FIRST, by)?,
+				ScrollReq::Reveal(id) => session.reveal(sf, &id, RevealAt::Start)?,
+			}
+		}
 		// After the render, so the composer exists when it takes focus.
 		let want_focus = app.compose.is_some();
 		if want_focus != focused {

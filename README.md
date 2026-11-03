@@ -23,9 +23,13 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 **One list for the organization.** Tabs for PRs you review, PRs you created, and everything active, grouped by project and repo. Each row shows drafts, vote counts, your own vote, the author, the age and the branches. Press `f` and type to filter by title, author, repo, branch or PR id.
 
-**A page per pull request.** Reviewers and their votes, linked work items, the rendered description, and the general comment threads.
+**A page per pull request.** A status card says where the PR stands: who approved, who is waiting or rejected, required reviewers still to vote, merge conflicts, and how many comment threads are open. The description renders as Markdown, and reviewers and linked work items sit beside it.
 
-<p align="center"><img src="docs/overview.png" alt="A pull request's overview: reviewers and votes, work items, the description and comments" width="900"></p>
+<p align="center"><img src="docs/overview.png" alt="A pull request's overview: the status card, the rendered description, and the reviewers and work items beside it" width="900"></p>
+
+**The whole conversation, in order.** Under the description, the activity timeline lists everything newest first: votes, pushes, reviewers being added, and every comment thread. Each thread is its own card with the file, its line range, the code it is about and its status (Active, Resolved, Won't fix). Every comment in it shows in full, with the author's name and initials, when they wrote it, whether it was edited, and its Markdown (lists, bold, code). `n` jumps from thread to thread, and `a` replies to the one you are on.
+
+<p align="center"><img src="docs/activity.png" alt="The activity timeline: a comment thread on tax.ts as a card with the code it is about and three comments, each with its author and time" width="900"></p>
 
 **Diffs you can read.** The changed files sit beside a syntax-highlighted diff with real line numbers, paged from the keyboard. Each file's comment threads appear under its diff, and the file list marks which files have comments. `n` jumps to the next comment, moving across files and scrolling the diff to its line. `x` switches between hunks and the whole file.
 
@@ -95,12 +99,12 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 |---|---|
 | `Tab`, `1` / `2` | Overview / Files |
 | `↑` `↓`, `j` `k` | Pick a file (Overview: scroll) |
-| `PgUp` `PgDn`, `Space` | Scroll the diff |
+| `PgUp` `PgDn`, `Space` / `u` | Page the diff or the overview |
 | `n` / `p` | Next / previous comment |
 | `x` | Whole file or hunks |
 | `v` then `1` `2` `3` `4` `0` | Approve, with suggestions, wait, reject, reset |
 | `c` / `a` | New comment / reply (`Enter` sends) |
-| `Esc` | Back to the list |
+| `Esc` | Leave the thread you are on, then back to the list |
 
 </td></tr>
 </table>

@@ -13,6 +13,14 @@ fn who(name: &str) -> Value {
 	json!({ "displayName": name, "id": name.to_lowercase().replace(' ', ".") })
 }
 
+/// A time `frac` of the way from the PR's creation to now, so every demo PR's history fits its age.
+fn at(pr: &Pr, frac: f64) -> String {
+	let now = chrono::Utc::now();
+	let created = chrono::DateTime::parse_from_rfc3339(&pr.creation_date).map_or(now, |t| t.with_timezone(&chrono::Utc));
+	let span = (now - created).num_seconds().max(0) as f64;
+	(created + chrono::Duration::seconds((span * frac) as i64)).to_rfc3339()
+}
+
 fn reviewer(name: &str, vote: i32, required: bool) -> Value {
 	json!({ "displayName": name, "id": name.to_lowercase().replace(' ', "."), "vote": vote, "isRequired": required })
 }
@@ -40,7 +48,7 @@ pub fn prs() -> Vec<Pr> {
 		})
 	};
 	let list = json!([
-		pr(4821, "Storefront", "checkout-web", "Show tax per line on the order review page", "Priya Shah", 5, "feature/line-tax-display", "main", false,
+		pr(4821, "Storefront", "checkout-web", "Show tax per line on the order review page", "Priya Shah", 54, "feature/line-tax-display", "main", false,
 			json!([reviewer(ME, 0, true), reviewer("Jordan Lee", 10, false), reviewer("Sam Okafor", 0, false)])),
 		pr(4817, "Storefront", "checkout-web", "Remember the shipping method between visits", "Jordan Lee", 30, "feature/remember-shipping", "main", false,
 			json!([reviewer(ME, 5, false), reviewer("Priya Shah", 10, false)])),
@@ -87,21 +95,42 @@ pub fn detail(pr: &Pr) -> Detail {
 			.expect("demo change")
 		})
 		.collect();
-	let comment = |author: &str, text: &str| json!({ "author": who(author), "content": text, "commentType": "text" });
+	let comment = |id: u32, author: &str, frac: f64, text: &str| {
+		json!({ "id": id, "author": who(author), "content": text, "commentType": "text", "publishedDate": at(pr, frac) })
+	};
+	let ids = json!({ "1": who("Priya Shah"), "2": who("Jordan Lee"), "3": who("Sam Okafor") });
+	let system = |id: u32, frac: f64, props: Value| {
+		json!({ "id": id, "publishedDate": at(pr, frac), "properties": props, "identities": ids,
+			"comments": [{ "id": 1, "author": who("Microsoft.VisualStudio.Services.TFS"), "content": "", "commentType": "system", "publishedDate": at(pr, frac) }] })
+	};
+	let v = |s: &str| json!({ "$value": s });
 	let threads = json!([
-		{ "id": 1, "status": "active",
-		  "threadContext": { "filePath": "/src/Checkout/tax.ts", "rightFileStart": { "line": 14 } },
+		system(101, 0.02, json!({ "CodeReviewThreadType": v("ReviewersUpdate"), "CodeReviewReviewersUpdatedNumAdded": v("1"),
+			"CodeReviewReviewersUpdatedByIdentity": v("1"), "CodeReviewReviewersUpdatedAddedIdentity": v("3") })),
+		{ "id": 2, "status": "fixed", "publishedDate": at(pr, 0.18),
+		  "threadContext": { "filePath": "/src/Checkout/OrderReview.vue", "rightFileStart": { "line": 9 }, "rightFileEnd": { "line": 9 } },
 		  "comments": [
-			comment("Jordan Lee", "Rounding each line and then summing can drift a cent from the order total. Should the last line absorb the difference?"),
-			comment("Priya Shah", "Good catch. `allocate` now gives the remainder to the largest line, and the spec covers a three-line order that used to be off by one cent.")
+			comment(1, "Sam Okafor", 0.18, "Can the tax column hide on narrow screens? It wraps the price on phones."),
+			comment(2, "Priya Shah", 0.42, "Done in `TaxLine.vue`: the rate hides under **480px**, so phones only show the amount.")
 		  ] },
-		{ "id": 2, "status": "fixed",
-		  "threadContext": { "filePath": "/src/Checkout/OrderReview.vue", "rightFileStart": { "line": 12 } },
-		  "comments": [ comment("Sam Okafor", "Can the tax column hide on narrow screens? It wraps the price on phones.") ] },
-		{ "id": 3, "status": "active",
-		  "comments": [ comment("Jordan Lee", "Approved. The staging orders look right for both addresses.") ] }
+		{ "id": 1, "status": "active", "publishedDate": at(pr, 0.25),
+		  "threadContext": { "filePath": "/src/Checkout/tax.ts", "rightFileStart": { "line": 13 }, "rightFileEnd": { "line": 20 } },
+		  "comments": [
+			comment(1, "Jordan Lee", 0.25, "Rounding each line and then summing can drift a cent from the order total. Should the last line absorb the difference?"),
+			comment(2, "Priya Shah", 0.40, "Good catch. `allocate` now:\n\n- rounds each share to cents first\n- gives whatever is left over to the **largest** line\n\nThe spec covers a three-line order that used to be off by one cent."),
+			comment(3, "Jordan Lee", 0.55, "Thanks, that reads well. Leaving this open until the spec runs in CI.")
+		  ] },
+		system(102, 0.38, json!({ "CodeReviewThreadType": v("RefUpdate"), "CodeReviewRefNewCommitsCount": v("2"), "CodeReviewRefUpdatedByIdentity": v("1") })),
+		{ "id": 4, "status": "closed", "publishedDate": at(pr, 0.6),
+		  "threadContext": { "filePath": "/config/appsettings.json", "rightFileStart": { "line": 5 } },
+		  "comments": [
+			comment(1, "Sam Okafor", 0.6, "Should `LineTax` default to `false` until finance signs off?"),
+			comment(2, "Priya Shah", 0.66, "Production overrides it to `false` in its own settings. This file is the dev default.")
+		  ] },
+		system(103, 0.8, json!({ "CodeReviewThreadType": v("VoteUpdate"), "CodeReviewVoteResult": v("10"), "CodeReviewVotedByIdentity": v("2") })),
+		{ "id": 3, "status": "active", "publishedDate": at(pr, 0.8),
+		  "comments": [ comment(1, "Jordan Lee", 0.8, "**Approved.** The staging orders look right for both addresses:\n\n1. Taxable (Austin, TX): 8.25% on each line\n2. Exempt (Portland, OR): no tax lines at all") ] }
 	]);
-	let _ = pr;
 	Detail {
 		changes,
 		threads: serde_json::from_value(threads).unwrap_or_default(),

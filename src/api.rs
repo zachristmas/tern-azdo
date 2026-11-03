@@ -43,8 +43,6 @@ pub struct Reviewer {
 	pub vote:         i32,
 	#[serde(default)]
 	pub is_required:  bool,
-	#[serde(default)]
-	pub is_container: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -167,11 +165,19 @@ pub struct ThreadContext {
 	pub right_file_start: Option<Pos>,
 	#[serde(default)]
 	pub left_file_start:  Option<Pos>,
+	#[serde(default)]
+	pub right_file_end:   Option<Pos>,
+	#[serde(default)]
+	pub left_file_end:    Option<Pos>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Comment {
+	#[serde(default)]
+	pub published_date:    Option<String>,
+	#[serde(default)]
+	pub last_content_updated_date: Option<String>,
 	#[serde(default)]
 	pub author:       Identity,
 	#[serde(default)]
@@ -194,6 +200,23 @@ pub struct Thread {
 	pub comments:       Vec<Comment>,
 	#[serde(default)]
 	pub is_deleted:     bool,
+	#[serde(default)]
+	pub published_date: Option<String>,
+	/// `CodeReview*` facts, each `{ "$value": ... }`: what kind of system thread it is and who did what.
+	#[serde(default)]
+	pub properties:     Option<Value>,
+	/// The identities `properties` points at, by number.
+	#[serde(default)]
+	pub identities:     Option<HashMap<String, Identity>>,
+}
+
+/// One line of the timeline from a system thread: who, and what they did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Event {
+	pub who:  String,
+	pub what: String,
+	/// The vote it records, for its icon.
+	pub vote: Option<i32>,
 }
 
 impl Thread {
@@ -219,6 +242,115 @@ impl Thread {
 
 	pub fn is_open(&self) -> bool {
 		matches!(self.status.as_deref(), Some("active" | "pending") | None)
+	}
+
+	/// The last line of the anchor's range (the start line when there is no range).
+	pub fn line_end(&self) -> Option<u32> {
+		let c = self.thread_context.as_ref()?;
+		let end = if c.right_file_start.is_some() { c.right_file_end.as_ref() } else { c.left_file_end.as_ref() };
+		end.map(|p| p.line).or_else(|| self.line())
+	}
+
+	/// Anchored to the old side (a removed line) rather than the new one.
+	pub fn on_left(&self) -> bool {
+		self.thread_context.as_ref().is_some_and(|c| c.right_file_start.is_none() && c.left_file_start.is_some())
+	}
+
+	/// When it started.
+	pub fn started(&self) -> &str {
+		self.published_date.as_deref().or_else(|| self.comments.first().and_then(|c| c.published_date.as_deref())).unwrap_or("")
+	}
+
+	/// When anyone last wrote in it.
+	pub fn latest(&self) -> &str {
+		self.human().filter_map(|c| c.published_date.as_deref()).max().unwrap_or_else(|| self.started())
+	}
+
+	/// A property's value as text (ADO sends strings and numbers).
+	fn prop(&self, name: &str) -> Option<String> {
+		match self.properties.as_ref()?.get(name)?.get("$value")? {
+			Value::String(s) => Some(s.clone()),
+			Value::Number(n) => Some(n.to_string()),
+			Value::Bool(b) => Some(b.to_string()),
+			_ => None,
+		}
+	}
+
+	/// The identity a property names, by its number in `identities`.
+	fn person(&self, name: &str) -> Option<String> {
+		let key = self.prop(name)?;
+		self.identities.as_ref()?.get(&key).map(|i| i.display_name.clone())
+	}
+
+	/// What a system thread records, if it is one worth a line in the timeline.
+	pub fn event(&self) -> Option<Event> {
+		if self.is_deleted || self.human().next().is_some() {
+			return None;
+		}
+		let by = |prop: &str| {
+			self.person(prop)
+				.or_else(|| self.comments.first().map(|c| c.author.display_name.clone()))
+				.filter(|n| !n.is_empty() && !n.starts_with("Microsoft."))
+				.unwrap_or_else(|| "Someone".into())
+		};
+		let count = |prop: &str| self.prop(prop).and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+		let plural = |n: u32, one: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") };
+		let (who, what, vote) = match self.prop("CodeReviewThreadType")?.as_str() {
+			"VoteUpdate" => {
+				let v = self.prop("CodeReviewVoteResult")?.parse::<i32>().ok()?;
+				let what = match v {
+					10 => "approved the pull request",
+					5 => "approved with suggestions",
+					-5 => "is waiting for the author",
+					-10 => "rejected the pull request",
+					_ => "reset their vote",
+				};
+				(by("CodeReviewVotedByIdentity"), what.to_owned(), Some(v))
+			},
+			"StatusUpdate" => {
+				let what = match self.prop("CodeReviewStatus")?.to_lowercase().as_str() {
+					"completed" => "completed the pull request".to_owned(),
+					"abandoned" => "abandoned the pull request".to_owned(),
+					"active" => "reactivated the pull request".to_owned(),
+					s => format!("set the status to {s}"),
+				};
+				(by("CodeReviewStatusUpdatedByIdentity"), what, None)
+			},
+			"RefUpdate" => {
+				let n = count("CodeReviewRefNewCommitsCount");
+				let what = if n > 0 { format!("pushed {}", plural(n, "commit")) } else { "updated the source branch".to_owned() };
+				(by("CodeReviewRefUpdatedByIdentity"), what, None)
+			},
+			"ReviewersUpdate" => {
+				let added = count("CodeReviewReviewersUpdatedNumAdded");
+				let removed = count("CodeReviewReviewersUpdatedNumRemoved");
+				let what = match (added, removed, self.person("CodeReviewReviewersUpdatedAddedIdentity")) {
+					(1, 0, Some(name)) => format!("added {name} as a reviewer"),
+					(a, 0, _) if a > 0 => format!("added {}", plural(a, "reviewer")),
+					(0, r, _) if r > 0 => format!("removed {}", plural(r, "reviewer")),
+					_ => "updated the reviewers".to_owned(),
+				};
+				(by("CodeReviewReviewersUpdatedByIdentity"), what, None)
+			},
+			"TargetChanged" => {
+				let who = self.prop("CodeReviewTargetChangedByDisplayName").unwrap_or_else(|| by(""));
+				(who, "changed the target branch".to_owned(), None)
+			},
+			_ => return None,
+		};
+		Some(Event { who, what, vote })
+	}
+}
+
+/// How a thread's status reads, and its style class.
+pub fn status_label(status: Option<&str>) -> (&'static str, &'static str) {
+	match status.unwrap_or("active") {
+		"fixed" => ("Resolved", "ok"),
+		"wontFix" => ("Won't fix", "dim"),
+		"closed" => ("Closed", "dim"),
+		"byDesign" => ("By design", "dim"),
+		"pending" => ("Pending", "wait"),
+		_ => ("Active", "acc"),
 	}
 }
 
@@ -477,5 +609,37 @@ mod tests {
 		}))
 		.unwrap();
 		assert!(!t.shown());
+	}
+
+	#[test]
+	fn system_threads_read_as_timeline_events() {
+		let t = |props: Value, ids: Value| -> Thread {
+			serde_json::from_value(json!({
+				"id": 9,
+				"comments": [{ "commentType": "system", "content": "x", "author": { "displayName": "Microsoft.VisualStudio.Services.TFS", "id": "s" } }],
+				"properties": props,
+				"identities": ids
+			}))
+			.unwrap()
+		};
+		let ids = json!({ "1": { "displayName": "Mei Tanaka", "id": "m" }, "2": { "displayName": "Sam Okafor", "id": "s" } });
+		let vote = t(
+			json!({ "CodeReviewThreadType": { "$value": "VoteUpdate" }, "CodeReviewVoteResult": { "$value": "-5" }, "CodeReviewVotedByIdentity": { "$value": "1" } }),
+			ids.clone(),
+		);
+		assert_eq!(vote.event(), Some(Event { who: "Mei Tanaka".into(), what: "is waiting for the author".into(), vote: Some(-5) }));
+		let push = t(
+			json!({ "CodeReviewThreadType": { "$value": "RefUpdate" }, "CodeReviewRefNewCommitsCount": { "$value": 2 }, "CodeReviewRefUpdatedByIdentity": { "$value": "1" } }),
+			ids.clone(),
+		);
+		assert_eq!(push.event().map(|e| e.what), Some("pushed 2 commits".into()));
+		let added = t(
+			json!({ "CodeReviewThreadType": { "$value": "ReviewersUpdate" }, "CodeReviewReviewersUpdatedNumAdded": { "$value": "1" },
+				"CodeReviewReviewersUpdatedByIdentity": { "$value": "1" }, "CodeReviewReviewersUpdatedAddedIdentity": { "$value": "2" } }),
+			ids.clone(),
+		);
+		assert_eq!(added.event().map(|e| (e.who, e.what)), Some(("Mei Tanaka".into(), "added Sam Okafor as a reviewer".into())));
+		let policy = t(json!({ "CodeReviewThreadType": { "$value": "PolicyStatusUpdate" } }), ids);
+		assert_eq!(policy.event(), None);
 	}
 }
