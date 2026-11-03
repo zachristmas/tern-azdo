@@ -32,6 +32,9 @@ const ROW_PX: f64 = 22.0;
 /// Context lines around each change; `x` shows the whole file.
 const CONTEXT: usize = 3;
 const COMPOSER: &str = "dock.ed";
+/// The comment box that opens under a diff line.
+const LINE_BOX: &str = "main.pbody.fv.dp.ds.cbox";
+const LINE_EDITOR: &str = "main.pbody.fv.dp.ds.cbox.ed";
 
 const CSS: &str = "\
 .box{height:100%;box-sizing:border-box;width:100%;overflow:hidden;padding:4px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
@@ -109,6 +112,25 @@ const CSS: &str = "\
 .azic{margin:12px 8px 16px 44px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45}\
 .azic .card{margin-bottom:0}\
 .azmsg{padding:16px;color:var(--sf-c-muted)}\
+.azseg{display:flex;margin:0 0 6px;border-radius:6px;overflow:hidden;background:color-mix(in srgb,var(--sf-c-muted) 6%,transparent)}\
+.azside{flex:1 1 0;min-width:0;display:flex;padding:4px 0}\
+.azseg.split>.azside:first-child{box-shadow:inset -1px 0 0 color-mix(in srgb,var(--sf-c-muted) 28%,transparent)}\
+.azgc{flex:none;user-select:none;-webkit-user-select:none}\
+.azgl{position:relative;height:18px;line-height:18px;box-sizing:border-box;padding:0 8px 0 24px;white-space:pre;color:var(--sf-c-muted);font-variant-numeric:tabular-nums;cursor:pointer}\
+.azgl.add{background:color-mix(in srgb,var(--sf-good,#3fb950) 16%,transparent)}\
+.azgl.del{background:color-mix(in srgb,var(--sf-bad,#f85149) 16%,transparent)}\
+.azgl.nil{cursor:default;background:color-mix(in srgb,var(--sf-c-muted) 9%,transparent)}\
+.azgl.gap{cursor:default;text-align:center;padding:0 8px}\
+.azgl:not(.nil):not(.gap):hover{color:var(--sf-c-accent)}\
+.azgl:not(.nil):not(.gap):hover::before{content:'+';position:absolute;left:4px;top:2px;width:14px;height:14px;line-height:14px;text-align:center;border-radius:3px;background:var(--sf-c-accent);color:#fff;font-weight:700}\
+.azcc{flex:1;min-width:0}\
+.azcc .sf-code{--sf-lh:18px;line-height:18px;font-size:12px;margin:0;border-radius:0;background:none;box-shadow:none}\
+.azcc .sf-code-body{padding:0}\
+.azcbox{margin:8px 8px 14px 44px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--sf-c-accent) 45%,transparent);border-radius:8px;display:flex;flex-direction:column;gap:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
+.azcbh{display:flex;align-items:center;gap:10px}\
+.azcbf{display:flex;justify-content:flex-end;gap:8px}\
+.azbtn{padding:4px 14px;border-radius:6px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);background:none;color:inherit;font:inherit;cursor:pointer}\
+.azbtn.pri{background:var(--sf-c-accent);border-color:var(--sf-c-accent);color:#fff}\
 .aztog{display:flex;flex-shrink:0;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);border-radius:6px;overflow:hidden}\
 .aztog span{padding:2px 10px;cursor:pointer;color:var(--sf-c-muted)}\
 .aztog span.on{background:color-mix(in srgb,var(--sf-c-accent) 22%,transparent);color:var(--sf-c-accent)}\
@@ -130,6 +152,11 @@ enum Msg {
 	/// The whole file (true) or the changes with context.
 	Full(bool),
 	Thread(u32),
+	/// A diff line number was clicked: comment on that line (the old side when true).
+	LineAt(u32, bool),
+	/// The line comment box's buttons.
+	Cancel,
+	Submit,
 	Send(String),
 	/// Native editing changed the composer's text.
 	Edit(wire::Edit),
@@ -464,6 +491,69 @@ fn when_full(when: &str) -> String {
 }
 
 /// `PS` for Priya Shah.
+/// Lines `from..to` of a diff: clickable line numbers beside highlighted code, side by side when `split`.
+fn segment(d: &FileDiff, from: usize, to: usize, split: bool, lang: &str) -> tern_sdk::Node<Msg> {
+	let (left, right) = diff::cells(&d.lines[from..to], split);
+	let seg = html::div().key(format!("s{from}")).class(if split { "azseg split" } else { "azseg" });
+	if split {
+		seg.child(side(&left, Some(true), lang)).child(side(&right, Some(false), lang)).into()
+	} else {
+		seg.child(side(&left, None, lang)).into()
+	}
+}
+
+/// One column of diff rows: `Some(true)` the old side, `Some(false)` the new, `None` both in one.
+fn side(cells: &[diff::Cell<'_>], old: Option<bool>, lang: &str) -> html::El<Msg> {
+	let mut gutter: Vec<tern_sdk::Node<Msg>> = Vec::with_capacity(cells.len());
+	let mut text = String::new();
+	let mut marks = Vec::new();
+	for (i, cell) in cells.iter().enumerate() {
+		if i > 0 {
+			text.push('\n');
+		}
+		let row = match cell {
+			diff::Cell::Nil => html::div().class("azgl nil"),
+			diff::Cell::Gap => html::div().class("azgl gap").text("⋯"),
+			diff::Cell::Line(l) => {
+				text.push_str(&l.text);
+				let tone = match l.tag {
+					'+' => Some(ui::Tone::Success),
+					'-' => Some(ui::Tone::Error),
+					_ => None,
+				};
+				if tone.is_some() {
+					marks.push(ui::CodeMark { line: i as u64 + 1, tone, ranges: Vec::new() });
+				}
+				let num = |n: Option<u64>| n.map_or_else(|| "    ".to_owned(), |n| format!("{n:>4}"));
+				let (label, at) = match old {
+					None => (format!("{} {} {}", num(l.old), num(l.new), l.tag), if l.tag == '-' { (l.old, true) } else { (l.new, false) }),
+					Some(true) => (format!("{} {}", num(l.old), l.tag), (l.old, true)),
+					Some(false) => (format!("{} {}", num(l.new), l.tag), (l.new, false)),
+				};
+				let cls = match l.tag {
+					'+' => "azgl add",
+					'-' => "azgl del",
+					_ => "azgl",
+				};
+				let row = html::div().class(cls).text(label);
+				match at {
+					(Some(n), left) => row.title(format!("Comment on line {n}")).on_click(Msg::LineAt(u32::try_from(n).unwrap_or(u32::MAX), left)),
+					(None, _) => row,
+				}
+			},
+		};
+		gutter.push(row.into());
+	}
+	let mut code = ui::code(text).marks(marks);
+	if !lang.is_empty() {
+		code = code.lang(lang.to_owned());
+	}
+	html::div()
+		.class("azside")
+		.child(html::div().class("azgc").children(gutter))
+		.child(html::div().class("azcc").child(code))
+}
+
 fn initials(name: &str) -> String {
 	let mut words = name.split_whitespace().filter_map(|w| w.chars().find(|c| c.is_alphanumeric()));
 	let first = words.next();
@@ -868,14 +958,14 @@ impl App {
 			}
 			dock.push(row.child(html::span("Esc cancels").class("dim")).into());
 		}
-		if let Some(c) = &self.compose {
+		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. })) {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
 				ComposeKind::Comment(None) => "New comment on the pull request (Enter sends, Shift+Enter new line, Esc cancels)".into(),
 				ComposeKind::Comment(Some(_)) => "Reply (Enter sends, Shift+Enter new line, Esc cancels)".into(),
-				ComposeKind::Line => format!("Line of {file} to comment on, as numbered in the diff; -12 for a removed line (Enter goes on, Esc cancels)"),
+				ComposeKind::Line => format!("Line of {file} to comment on, -12 for a removed line, or click a line number in the diff (Enter goes on, Esc cancels)"),
 				ComposeKind::Inline { line, left } => {
 					format!("Comment on {}line {line} of {file} (Enter sends, Shift+Enter new line, Esc cancels)", if left { "removed " } else { "" })
 				},
@@ -1266,29 +1356,40 @@ impl App {
 					body.extend(threads.iter().map(|t| card(t)));
 				} else {
 					head = head.child(html::span(format!("+{} −{}", diff.added(), diff.removed())).class("dim"));
-					let mode = if p.split { ui::DiffMode::Split } else { ui::DiffMode::Unified };
-					let mut placed: Vec<(usize, &Thread)> = threads
+					let lang = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+					// Thread cards, and the open comment box (None), each after the lines it is about.
+					let mut placed: Vec<(usize, Option<&Thread>)> = threads
 						.iter()
 						.map(|t| {
 							let at = t.line().map_or(0, |l| {
 								let l = u64::from(l);
 								diff.anchor(l, t.line_end().map_or(l, u64::from).max(l), t.on_left())
 							});
-							(at, *t)
+							(at, Some(*t))
 						})
 						.collect();
-					placed.sort_by_key(|(at, t)| (*at, t.line()));
-					let (mut from, mut k) = (0, 0);
+					let open = self.compose.as_ref().and_then(|c| match c.kind {
+						ComposeKind::Inline { line, left } => Some((c, line, left)),
+						_ => None,
+					});
+					if let Some((_, line, left)) = open {
+						placed.push((diff.anchor(line.into(), line.into(), left), None));
+					}
+					placed.sort_by_key(|(at, t)| (*at, t.is_some(), t.and_then(|t| t.line())));
+					let mut from = 0;
 					for (at, t) in placed {
 						if at > from {
-							body.push(ui::diff().key(format!("s{k}")).hunks(diff.window(from, at - from)).path(path.to_owned()).mode(mode.clone()).into());
-							k += 1;
+							body.push(segment(diff, from, at, p.split, lang));
 							from = at;
 						}
-						body.push(card(t));
+						body.push(match (t, open) {
+							(Some(t), _) => card(t),
+							(None, Some((c, line, left))) => self.line_box(c, line, left),
+							(None, None) => continue,
+						});
 					}
 					if from < diff.len() {
-						body.push(ui::diff().key(format!("s{k}")).hunks(diff.window(from, diff.len() - from)).path(path.to_owned()).mode(mode.clone()).into());
+						body.push(segment(diff, from, diff.len(), p.split, lang));
 					}
 				}
 			},
@@ -1298,6 +1399,39 @@ impl App {
 			.child(html::div().class("aztog right").child(tog(!p.split, "Inline", Msg::Split(false))).child(tog(p.split, "Side by side", Msg::Split(true))))
 			.child(html::div().class("aztog").child(tog(!p.full, "Changes", Msg::Full(false))).child(tog(p.full, "Whole file", Msg::Full(true))));
 		html::div().key("dp").class("azdp").child(head).child(html::div().key("ds").class("azds").children(body))
+	}
+
+	/// The comment box under a diff line, as in Azure DevOps.
+	fn line_box(&self, c: &Composer, line: u32, left: bool) -> tern_sdk::Node<Msg> {
+		let me = self.me.as_ref().map_or("You", |m| m.display_name.as_str());
+		html::div()
+			.key("cbox")
+			.class("azcbox")
+			.child(
+				html::div()
+					.class("azcbh")
+					.child(avatar(me))
+					.child(html::span(format!("Comment on line {line}{}", if left { " of the old version" } else { "" })).class("dim")),
+			)
+			.child(
+				ui::editor()
+					.key("ed")
+					.text(c.draft.clone())
+					.cursor(c.utf16_cursor())
+					.placeholder("Add a comment. Markdown works. Enter sends, Shift+Enter new line, Esc cancels.")
+					.sendable(true)
+					.max_lines(10u32)
+					.on_send(|t| Msg::Send(t.to_owned()))
+					.on_edit(|e| Msg::Edit(e.clone()))
+					.on_focus(Msg::Focus),
+			)
+			.child(
+				html::div()
+					.class("azcbf")
+					.child(html::button("Cancel").class("azbtn").on_click(Msg::Cancel))
+					.child(html::button("Comment").class("azbtn pri").on_click(Msg::Submit)),
+			)
+			.into()
 	}
 
 	// ---- input ----------------------------------------------------------------------------------
@@ -1478,6 +1612,7 @@ impl App {
 			},
 			ComposeKind::Inline { line, left } => {
 				if text.trim().is_empty() {
+					self.compose = Some(Composer::new(c.kind, text));
 					return;
 				}
 				if let Some(p) = &self.page
@@ -1775,6 +1910,20 @@ impl App {
 				}
 			},
 			Msg::Send(text) => self.send(text),
+			Msg::LineAt(line, left) => {
+				if self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files && p.file_ready()) {
+					// Moving the box keeps what was typed.
+					let draft = self.compose.take().filter(|c| matches!(c.kind, ComposeKind::Inline { .. })).map(|c| c.draft).unwrap_or_default();
+					self.compose = Some(Composer::new(ComposeKind::Inline { line, left }, draft));
+					self.tree_req = Some(LINE_BOX.to_owned());
+				}
+			},
+			Msg::Cancel => self.compose = None,
+			Msg::Submit => {
+				if let Some(text) = self.compose.as_ref().map(|c| c.draft.clone()) {
+					self.send(text);
+				}
+			},
 			Msg::Edit(e) => {
 				if let Some(c) = &mut self.compose {
 					if !c.apply(&e) {
@@ -1807,7 +1956,7 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	let sf = session.open(SurfaceOptions::screen().title("Pull Requests").role("azdo"))?;
 	session.stylesheet(sf, "azdo", Some(CSS))?;
 	let mut app = App::new(org, demo);
-	let mut focused = false;
+	let mut focused: Option<&str> = None;
 	let mut rows_checked = Instant::now();
 	// TERN_AZDO_TRACE=file logs every input, for seeing what Tern sends.
 	let mut trace = std::env::var_os("TERN_AZDO_TRACE").and_then(|p| std::fs::File::create(p).ok());
@@ -1834,9 +1983,9 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 			app.note = format!("could not scroll the file list: {e}");
 		}
 		// After the render, so the composer exists when it takes focus.
-		let want_focus = app.compose.is_some();
+		let want_focus = app.compose.as_ref().map(|c| if matches!(c.kind, ComposeKind::Inline { .. }) { LINE_EDITOR } else { COMPOSER });
 		if want_focus != focused {
-			session.focus(sf, want_focus.then_some(COMPOSER))?;
+			session.focus(sf, want_focus)?;
 			focused = want_focus;
 		}
 		let wait = Duration::from_millis(if app.busy > 0 { 100 } else { 1000 });

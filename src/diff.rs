@@ -17,6 +17,50 @@ pub struct Line {
 	pub hunk: usize,
 }
 
+/// One row of a drawn diff side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cell<'a> {
+	Line(&'a Line),
+	/// Blank, across from lines the other side does not have.
+	Nil,
+	/// Between hunks.
+	Gap,
+}
+
+/// The rows of `lines` for one column (`split` false), or for the two sides of a side-by-side
+/// view: unchanged lines on both, each run of removed lines beside the added lines after it.
+pub fn cells(lines: &[Line], split: bool) -> (Vec<Cell<'_>>, Vec<Cell<'_>>) {
+	let (mut left, mut right) = (Vec::new(), Vec::new());
+	let mut i = 0;
+	while i < lines.len() {
+		if i > 0 && lines[i].hunk != lines[i - 1].hunk {
+			left.push(Cell::Gap);
+			if split {
+				right.push(Cell::Gap);
+			}
+		}
+		let l = &lines[i];
+		if !split || l.tag == ' ' {
+			left.push(Cell::Line(l));
+			if split {
+				right.push(Cell::Line(l));
+			}
+			i += 1;
+			continue;
+		}
+		let hunk = l.hunk;
+		let run = |from: usize, tag: char| lines[from..].iter().take_while(|x| x.tag == tag && x.hunk == hunk).count();
+		let dels = run(i, '-');
+		let adds = run(i + dels, '+');
+		for k in 0..dels.max(adds) {
+			left.push(if k < dels { Cell::Line(&lines[i + k]) } else { Cell::Nil });
+			right.push(if k < adds { Cell::Line(&lines[i + dels + k]) } else { Cell::Nil });
+		}
+		i += dels + adds;
+	}
+	(left, right)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FileDiff {
 	pub lines: Vec<Line>,
@@ -132,6 +176,26 @@ mod tests {
 		let part = d.window(2, 2);
 		assert_eq!(part[0].lines, vec!["+D", " e"]);
 		assert_eq!((part[0].old_start, part[0].new_start), (Some(5), Some(4)));
+	}
+
+	#[test]
+	fn side_by_side_pairs_removed_with_added_lines() {
+		let d = build("a\nb\nc\nd\n", "a\nB\nd\n", 1);
+		let (l, r) = cells(&d.lines, true);
+		let show = |c: &[Cell<'_>]| {
+			c.iter()
+				.map(|c| match c {
+					Cell::Line(l) => format!("{}{}", l.tag, l.text),
+					Cell::Nil => "~".into(),
+					Cell::Gap => "...".into(),
+				})
+				.collect::<Vec<_>>()
+		};
+		assert_eq!(show(&l), [" a", "-b", "-c", " d"]);
+		assert_eq!(show(&r), [" a", "+B", "~", " d"]);
+		let (one, none) = cells(&d.lines, false);
+		assert_eq!(one.len(), d.len());
+		assert!(none.is_empty());
 	}
 
 	#[test]

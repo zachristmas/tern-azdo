@@ -31,9 +31,9 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 <p align="center"><img src="docs/activity.png" alt="The activity timeline: a comment thread on tax.ts as a card with the code it is about and three comments, each with its author and time" width="900"></p>
 
-**Diffs you can read.** The changed files sit in a folder tree beside a syntax-highlighted diff with real line numbers. Comment threads appear inside the diff, right under the lines they are about, and the tree marks which files have comments. `s` switches between inline and side by side, `x` between changes and the whole file, and the diff scrolls on its own with the vim keys. `n` jumps to the next comment, moving across files. `c` leaves a comment on a line: give the line number as the diff shows it (`-12` for a removed line), then write the comment.
+**Diffs you can read.** The changed files sit in a folder tree beside a syntax-highlighted diff with real line numbers. Comment threads appear inside the diff, right under the lines they are about, and the tree marks which files have comments. `s` switches between inline and side by side, `x` between changes and the whole file, and the diff scrolls on its own with the vim keys. `n` jumps to the next comment, moving across files. To comment on a line, click its line number: a comment box opens under it, as in Azure DevOps. From the keyboard, `c` asks for the line number (`-12` for a removed line).
 
-<p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files on the left, a side-by-side diff on the right with a comment thread under the lines it is about" width="900"></p>
+<p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files on the left, the diff on the right with a comment box open under the clicked line" width="900"></p>
 
 **Review without leaving.** Vote (approve, approve with suggestions, wait for author, reject), start a comment thread, or reply to one. Open the PR in the browser, or copy its link or source branch.
 
