@@ -1432,8 +1432,7 @@ impl App {
 		// Vim motions: gg and G, Ctrl+D / Ctrl+U (or d / u, as in less) for half a screen, Ctrl+F / Ctrl+B for a screen.
 		let after_g = std::mem::take(&mut self.g_pending);
 		let plain = !key.ctrl && !key.alt && !key.meta;
-		// Tern can report Ctrl as meta, so either counts.
-		let ctl = (key.ctrl || key.meta) && !key.alt;
+		let ctl = key.ctrl && !key.alt;
 		let shift_g = plain && (key.name == "G" || (key.name == "g" && key.shift));
 		if plain && key.name == "g" && !key.shift {
 			if after_g {
@@ -1635,6 +1634,15 @@ impl App {
 	}
 }
 
+/// Tern can report Ctrl as meta; off macOS (where meta is Cmd) treat it as Ctrl so Ctrl shortcuts work.
+fn ctrl_from_meta(mut key: Key) -> Key {
+	if !cfg!(target_os = "macos") && key.meta && !key.ctrl {
+		key.meta = false;
+		key.ctrl = true;
+	}
+	key
+}
+
 pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	let Some(mut session) = Session::<Msg>::connect(Options::new().feature(feature::SEND).feature(feature::EDIT))? else {
 		anyhow::bail!("the interactive view needs Tern; use `tern-azdo list` elsewhere");
@@ -1694,6 +1702,7 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 		}
 		match input {
 			Input::Key(key) => {
+				let key = ctrl_from_meta(key);
 				if app.compose.is_some() {
 					app.compose_key(&key);
 				} else if !app.key(&key) {
