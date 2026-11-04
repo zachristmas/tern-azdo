@@ -57,7 +57,7 @@ const CSS: &str = "\
 .rail.full{width:100%}\
 .pbb{flex:1;min-height:0;position:relative;overflow:hidden}\
 .pbb>.ov,.pbb>.azfv,.pbb>.box,.pbb>.azmsg{position:absolute;top:0;left:0;right:0;bottom:0;height:auto}\
-.shell{display:flex;flex-direction:column;height:100%;width:100%}\
+.shell{display:flex;flex-direction:column;height:100%;min-height:0}\
 .shell .lw{flex:1;min-height:0;height:auto;overflow:hidden;align-items:stretch}.shell .lw>.rail{height:auto;align-self:stretch;min-height:0;overflow-y:auto;overflow-x:hidden}.shell>.lwm{flex:1;min-height:0;height:auto}.shell>.rail.full{flex:1;min-height:0;height:auto}\
 .topbar{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;flex-shrink:0;padding:2px 6px 10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
 .tbg{display:flex;flex-wrap:wrap;gap:5px;align-items:center}\
@@ -1385,10 +1385,9 @@ impl App {
 	/// The whole screen: the filter bar over the navigation rail and the open pull request (the rail alone on a narrow
 	/// pane until one is opened).
 	fn shell(&self) -> ui::Col<Msg> {
-		let lines = self.avail() - 0.5;
 		let wide = self.cols >= RAIL_MIN_COLS;
-		// An explicit height: a percentage does not resolve through the native column, and the page would shrink to the rail.
-		let mut shell = html::div().class("shell").attr("style", format!("height:{:.0}px", lines * self.cell_h * CSS_PER_CELL_H));
+		// It grows to fill the native column; without that it is only as tall as its content (the rail).
+		let mut shell = html::div().class("shell").grow(1.0);
 		match (&self.page, wide) {
 			(Some(p), true) => shell = shell.child(self.topbar()).child(html::div().class("lw").child(self.rail()).child(self.page_pane(p))),
 			(Some(p), false) => shell = shell.child(self.page_pane(p)),
@@ -1399,7 +1398,7 @@ impl App {
 			},
 			(None, false) => shell = shell.child(self.topbar()).child(self.rail().class("rail full")),
 		}
-		ui::col().child(ui::col().key("pbody").min(ui::Bound::h(ui::Extent::Lines(lines))).max(ui::Bound::h(ui::Extent::Lines(lines))).child(shell))
+		ui::col().key("pbody").child(shell)
 	}
 
 	/// One pull request: its title, author and branches, the tabs, then the page. Nothing here moves when you switch PRs.
