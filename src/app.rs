@@ -31,6 +31,10 @@ const CSS_PER_CELL_H: f64 = 0.78;
 const ROW_PX: f64 = 22.0;
 /// Context lines around each change; `x` shows the whole file.
 const CONTEXT: usize = 3;
+/// The pane width (in columns) from which the navigation rail shows; below it `/` jumps between PRs.
+const RAIL_MIN_COLS: f64 = 110.0;
+/// Results the switcher shows at once.
+const JUMP_ROWS: usize = 8;
 const COMPOSER: &str = "dock.ed";
 /// The comment box that opens under a diff line.
 const LINE_BOX: &str = "main.pbody.fv.dp.ds.cbox";
@@ -43,10 +47,54 @@ const CSS: &str = "\
 .row:hover{background:color-mix(in srgb,var(--sf-c-muted) 14%,transparent)}\
 .row.cur{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
 .grp{color:var(--sf-c-muted);font-weight:600;cursor:default}.grp:hover{background:none}\
-.pr{padding-left:24px}\
-.id{color:var(--sf-c-muted);min-width:52px;font-variant-numeric:tabular-nums}\
-.t{flex:1;overflow:hidden;text-overflow:ellipsis}\
-.m{color:var(--sf-c-muted);overflow:hidden;text-overflow:ellipsis;max-width:48%}\
+.pr{padding-left:22px;gap:8px}\
+.ph{background:color-mix(in srgb,var(--sf-c-muted) 9%,transparent);font-weight:650;gap:6px}\
+.ph.cur{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
+.ph .az{width:12px;text-align:center;flex-shrink:0;color:var(--sf-c-muted)}\
+.ph .rp{color:var(--sf-c-muted);font-weight:400}\
+.ph .n{margin-left:auto;color:var(--sf-c-muted);font-weight:400;font-variant-numeric:tabular-nums}\
+.cr{cursor:pointer;color:var(--sf-c-muted)}.cr:hover{color:var(--sf-c-accent);text-decoration:underline}.crn{font-variant-numeric:tabular-nums}\n.lw{display:flex;gap:10px;height:100%;width:100%}.lw .box{flex:1;min-width:0;width:auto}\n.rail{width:220px;flex-shrink:0;box-sizing:border-box;height:100%;overflow:hidden;padding:4px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\n.rail .row{gap:6px}.rail .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.rail .n{color:var(--sf-c-muted);font-variant-numeric:tabular-nums}\n.lwm{flex:1;min-width:0;height:100%;overflow:hidden;display:flex;flex-direction:column;font-family:Geist,system-ui,sans-serif}\
+.rail.full{width:100%}\
+.pbb{flex:1;min-height:0;position:relative;overflow:hidden}\
+.pbb>.ov,.pbb>.azfv,.pbb>.box,.pbb>.azmsg{position:absolute;top:0;left:0;right:0;bottom:0;height:auto}\
+.shell{display:flex;flex-direction:column;height:100%;width:100%}\
+.shell .lw{flex:1;min-height:0;height:auto;overflow:hidden;align-items:stretch}.shell .lw>.rail{height:auto;align-self:stretch;min-height:0;overflow-y:auto;overflow-x:hidden}.shell>.lwm{flex:1;min-height:0;height:auto}.shell>.rail.full{flex:1;min-height:0;height:auto}\
+.topbar{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;flex-shrink:0;padding:2px 6px 10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
+.tbg{display:flex;flex-wrap:wrap;gap:5px;align-items:center}\
+.tbl{color:var(--sf-c-muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-right:2px}\
+.tbc{padding:2px 10px;border-radius:12px;cursor:pointer;white-space:nowrap;border:1px solid color-mix(in srgb,var(--sf-c-muted) 35%,transparent)}\
+.tbc:hover{border-color:var(--sf-c-accent)}\
+.tbc.on{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent);border-color:var(--sf-c-accent)}\
+.tbc .n{color:var(--sf-c-muted);margin-left:6px;font-variant-numeric:tabular-nums}\
+.topbar{position:relative;z-index:5;gap:10px;padding-bottom:8px}\
+.dd{position:relative}\
+.ddb{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;border:1px solid color-mix(in srgb,var(--sf-c-muted) 40%,transparent)}\
+.ddb:hover,.ddb.on{border-color:var(--sf-c-accent)}\
+.ddb .tbl{margin:0}.ddb .az{color:var(--sf-c-muted);font-size:10px}\
+.ddm{position:absolute;top:calc(100% + 4px);left:0;min-width:100%;z-index:20;box-sizing:border-box;padding:4px;border-radius:6px;max-height:60vh;overflow-y:auto;background:var(--sf-c-bg,#1e1e22);border:1px solid var(--sf-c-accent);box-shadow:0 6px 18px rgba(0,0,0,.45)}\
+.ddi{display:flex;align-items:center;gap:14px;padding:5px 10px;border-radius:4px;cursor:pointer;white-space:nowrap}\
+.ddi:hover{background:color-mix(in srgb,var(--sf-c-muted) 16%,transparent)}\
+.ddi.on{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
+.ddi .n{margin-left:auto;color:var(--sf-c-muted);font-variant-numeric:tabular-nums}\
+.ptabs{display:flex;gap:4px;margin:2px 4px 0;border-bottom:1px solid color-mix(in srgb,var(--sf-c-muted) 28%,transparent);flex-shrink:0}\
+.ptab{padding:6px 12px;cursor:pointer;color:var(--sf-c-muted);border-bottom:2px solid transparent}\
+.ptab:hover{color:inherit}.ptab.on{color:inherit;font-weight:600;border-bottom-color:var(--sf-c-accent)}\
+.head{flex-shrink:0}\
+.jump{box-sizing:border-box;padding:4px;border:1px solid var(--sf-c-accent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;overflow:hidden}\
+.jump .pj{color:var(--sf-c-muted)}\
+.rail .rp{padding-left:8px;gap:6px}.rail .ri{color:var(--sf-c-muted);font-variant-numeric:tabular-nums;min-width:40px}\
+.rail{overflow-y:auto;width:330px}\
+.rail .rl{padding:6px 8px 2px;color:var(--sf-c-muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;cursor:default}\
+.rpr{padding:5px 8px 6px 16px;border-radius:4px;cursor:pointer;line-height:1.3}.rpr:hover{background:color-mix(in srgb,var(--sf-c-muted) 14%,transparent)}\
+.rpr.cur{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
+.rpr .rt{font-size:14.5px;font-weight:550;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal}\
+.rpr .rm{display:flex;flex-wrap:wrap;align-items:center;gap:1px 8px;margin-top:3px;color:var(--sf-c-muted);font-size:11.5px}\
+.crumb{gap:8px;padding:2px 4px 0}\n.rh{padding-left:22px;color:var(--sf-c-muted);font-size:11.5px;font-weight:600;cursor:default}.rh:hover{background:none}\
+.id{color:var(--sf-c-muted);min-width:46px;font-variant-numeric:tabular-nums}\
+.t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.au{width:96px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;color:var(--sf-c-muted)}\
+.rb{width:230px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;color:var(--sf-c-muted);font-family:\"Geist Mono\",ui-monospace,monospace;font-size:11.5px}\
+.ag{width:30px;flex-shrink:0;text-align:right;color:var(--sf-c-muted);font-variant-numeric:tabular-nums}\
 .ok{color:var(--sf-good,#3fb950)}.bad{color:var(--sf-bad,#f85149)}.wait{color:var(--sf-warn,#d29922)}.dim{color:var(--sf-c-muted)}\
 .chip{border:1px solid color-mix(in srgb,var(--sf-c-muted) 60%,transparent);border-radius:8px;padding:0 6px;font-size:11px;color:var(--sf-c-muted)}\
 .files{width:34%;min-width:220px;max-width:460px;flex-shrink:0}\
@@ -56,7 +104,7 @@ const CSS: &str = "\
 .cc{color:var(--sf-c-accent);font-size:11px}\
 .who{font-weight:600}\
 .head{font-family:Geist,system-ui,sans-serif;font-size:12.9px;padding:2px 4px;display:flex;gap:10px;align-items:center;white-space:nowrap;overflow:hidden}\
-.title{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis}\
+.title{font-weight:700;font-size:18px;overflow:hidden;text-overflow:ellipsis}\
 .prompt{display:flex;gap:14px;align-items:center;height:28px;padding:0 10px;border:1px solid var(--sf-c-accent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
 .prompt .pl{color:var(--sf-c-accent);font-weight:600}\
 .hsub{gap:8px;padding-top:4px;padding-bottom:6px}\
@@ -138,10 +186,16 @@ const CSS: &str = "\
 
 #[derive(Clone, Debug)]
 enum Msg {
-	/// A list row was clicked.
-	Pick(u32),
 	/// A list row was double-clicked.
 	Open(u32),
+	/// A top bar dropdown was clicked: open it, or close it if it is open.
+	Menu(Menu),
+	/// The project filter in the top bar (None: every project).
+	Project(Option<String>),
+	/// The status filter in the top bar.
+	Status(String),
+	/// The sort order in the top bar.
+	Sort(String),
 	ListTab(String),
 	PrTab(String),
 	File(usize),
@@ -161,6 +215,101 @@ enum Msg {
 	/// Native editing changed the composer's text.
 	Edit(wire::Edit),
 	Focus,
+}
+
+/// How the rail orders the PRs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SortMode {
+	/// Grouped by project, then repo, newest first within each.
+	Project,
+	/// Every project together, most recently created first.
+	Newest,
+	/// Every project together, oldest first.
+	Oldest,
+}
+
+impl SortMode {
+	const ALL: [Self; 3] = [Self::Project, Self::Newest, Self::Oldest];
+
+	fn id(self) -> &'static str {
+		match self {
+			Self::Project => "project",
+			Self::Newest => "newest",
+			Self::Oldest => "oldest",
+		}
+	}
+
+	fn label(self) -> &'static str {
+		match self {
+			Self::Project => "By project",
+			Self::Newest => "Newest first",
+			Self::Oldest => "Oldest first",
+		}
+	}
+}
+
+/// The dropdowns in the top bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Menu {
+	Show,
+	Project,
+	Status,
+	Sort,
+}
+
+/// The status filter in the top bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusFilter {
+	Any,
+	Ready,
+	Draft,
+	Approved,
+	Blocked,
+}
+
+impl StatusFilter {
+	const ALL: [Self; 5] = [Self::Any, Self::Ready, Self::Draft, Self::Approved, Self::Blocked];
+
+	fn id(self) -> &'static str {
+		match self {
+			Self::Any => "any",
+			Self::Ready => "ready",
+			Self::Draft => "draft",
+			Self::Approved => "approved",
+			Self::Blocked => "blocked",
+		}
+	}
+
+	fn label(self) -> &'static str {
+		match self {
+			Self::Any => "Any status",
+			Self::Ready => "Ready",
+			Self::Draft => "Draft",
+			Self::Approved => "Approved",
+			Self::Blocked => "Blocked",
+		}
+	}
+
+	fn matches(self, p: &Pr) -> bool {
+		let blocked = p.reviewers.iter().any(|r| r.vote < 0) || matches!(p.merge_status.as_deref(), Some("conflicts" | "failure"));
+		match self {
+			Self::Any => true,
+			Self::Ready => !p.is_draft,
+			Self::Draft => p.is_draft,
+			Self::Approved => p.reviewers.iter().any(|r| r.vote >= 5) && !blocked,
+			Self::Blocked => blocked,
+		}
+	}
+}
+
+/// "Zach Christmas" becomes "Zach C.".
+fn short_name(name: &str) -> String {
+	let mut w = name.split_whitespace();
+	match (w.next(), w.last()) {
+		(Some(f), Some(l)) => format!("{f} {}.", l.chars().next().unwrap_or_default()),
+		(Some(f), None) => f.to_owned(),
+		_ => String::new(),
+	}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,6 +352,8 @@ enum ComposeKind {
 	Filter,
 	/// A new thread when none, else a reply in that thread.
 	Comment(Option<u32>),
+	/// The quick switcher: type to pick any pull request.
+	Jump,
 	/// The line an inline comment goes on.
 	Line,
 	/// An inline comment on a line of the selected file (the old side when `left`).
@@ -409,6 +560,14 @@ struct App {
 	tab:     ListTab,
 	filter:  String,
 	sel:     Option<u32>,
+	/// The project filter (None: every project).
+	project: Option<String>,
+	/// The open dropdown in the top bar.
+	menu:    Option<Menu>,
+	status:  StatusFilter,
+	sort:    SortMode,
+	/// The highlighted result in the switcher.
+	jump:    usize,
 	page:    Option<Page>,
 	compose: Option<Composer>,
 	voting:  bool,
@@ -675,6 +834,11 @@ impl App {
 			tab: ListTab::Review,
 			filter: String::new(),
 			sel: None,
+			project: None,
+			menu: None,
+			status: StatusFilter::Any,
+			sort: SortMode::Project,
+			jump: 0,
 			page: None,
 			compose: None,
 			voting: false,
@@ -742,6 +906,8 @@ impl App {
 			.prs
 			.iter()
 			.filter(|p| self.in_tab(p, self.tab))
+			.filter(|p| self.status.matches(p))
+			.filter(|p| self.project.as_ref().is_none_or(|n| *n == p.repository.project.name))
 			.filter(|p| {
 				needle.is_empty()
 					|| [p.title.as_str(), p.created_by.display_name.as_str(), p.repository.name.as_str(), p.repository.project.name.as_str(), p.source()]
@@ -750,11 +916,15 @@ impl App {
 					|| p.pull_request_id.to_string() == needle.trim_start_matches('!')
 			})
 			.collect();
-		v.sort_by(|a, b| {
-			(a.repository.project.name.to_lowercase(), a.repository.name.to_lowercase())
-				.cmp(&(b.repository.project.name.to_lowercase(), b.repository.name.to_lowercase()))
-				.then(b.pull_request_id.cmp(&a.pull_request_id))
-		});
+		match self.sort {
+			SortMode::Project => v.sort_by(|a, b| {
+				(a.repository.project.name.to_lowercase(), a.repository.name.to_lowercase())
+					.cmp(&(b.repository.project.name.to_lowercase(), b.repository.name.to_lowercase()))
+					.then(b.pull_request_id.cmp(&a.pull_request_id))
+			}),
+			SortMode::Newest => v.sort_by(|a, b| stamp(&b.creation_date).cmp(&stamp(&a.creation_date)).then(b.pull_request_id.cmp(&a.pull_request_id))),
+			SortMode::Oldest => v.sort_by(|a, b| stamp(&a.creation_date).cmp(&stamp(&b.creation_date)).then(a.pull_request_id.cmp(&b.pull_request_id))),
+		}
 		v
 	}
 
@@ -766,25 +936,74 @@ impl App {
 		self.prs.iter().find(|p| p.pull_request_id == id)
 	}
 
+	fn ids(&self) -> Vec<u32> {
+		self.visible().iter().map(|p| p.pull_request_id).collect()
+	}
+
 	fn fix_selection(&mut self) {
-		let ids: Vec<u32> = self.visible().iter().map(|p| p.pull_request_id).collect();
+		// A project filter that no longer matches anything (after a tab or status change) drops away.
+		if let Some(n) = self.project.clone()
+			&& !self.prs.iter().any(|p| self.in_tab(p, self.tab) && self.status.matches(p) && p.repository.project.name == n)
+		{
+			self.project = None;
+		}
+		let ids = self.ids();
 		if !self.sel.is_some_and(|s| ids.contains(&s)) {
 			self.sel = ids.first().copied();
 		}
 	}
 
 	fn move_sel(&mut self, delta: i64) {
-		let ids: Vec<u32> = self.visible().iter().map(|p| p.pull_request_id).collect();
+		let ids = self.ids();
 		if ids.is_empty() {
 			return;
 		}
 		let at = self.sel.and_then(|s| ids.iter().position(|i| *i == s)).unwrap_or(0) as i64;
-		let next = (at + delta).clamp(0, ids.len() as i64 - 1) as usize;
-		self.sel = Some(ids[next]);
+		self.sel = Some(ids[(at + delta).clamp(0, ids.len() as i64 - 1) as usize]);
+	}
+
+	/// The open PR's siblings in its project, in list order.
+	fn siblings(&self) -> Vec<u32> {
+		let Some(p) = &self.page else { return Vec::new() };
+		let proj = &p.pr.repository.project.name;
+		self.visible().iter().filter(|q| q.repository.project.name == *proj).map(|q| q.pull_request_id).collect()
+	}
+
+	/// Open the previous or next PR in the same project.
+	fn step_pr(&mut self, forward: bool) {
+		let ids = self.siblings();
+		let Some(at) = self.page.as_ref().and_then(|p| ids.iter().position(|i| *i == p.pr.pull_request_id)) else { return };
+		let to = if forward { at + 1 } else { at.wrapping_sub(1) };
+		if let Some(id) = ids.get(to) {
+			self.open(*id);
+		}
+	}
+
+	/// Every active PR matching each word of `q`, by project, repo, then newest first.
+	fn jump_results(&self, q: &str) -> Vec<u32> {
+		let words: Vec<String> = q.to_lowercase().split_whitespace().map(|w| w.trim_start_matches('!').to_owned()).collect();
+		let mut v: Vec<&Pr> = self
+			.prs
+			.iter()
+			.filter(|p| {
+				let hay = format!("{} {} {} {} {} {}", p.pull_request_id, p.title, p.created_by.display_name, p.repository.name, p.repository.project.name, p.source()).to_lowercase();
+				words.iter().all(|w| hay.contains(w.as_str()))
+			})
+			.collect();
+		v.sort_by(|a, b| {
+			(a.repository.project.name.to_lowercase(), a.repository.name.to_lowercase())
+				.cmp(&(b.repository.project.name.to_lowercase(), b.repository.name.to_lowercase()))
+				.then(b.pull_request_id.cmp(&a.pull_request_id))
+		});
+		v.iter().map(|p| p.pull_request_id).collect()
 	}
 
 	fn open(&mut self, id: u32) {
 		let Some(pr) = self.prs.iter().find(|p| p.pull_request_id == id).cloned() else { return };
+		self.menu = None;
+		if self.compose.as_ref().is_some_and(|c| c.kind == ComposeKind::Jump) {
+			self.compose = None;
+		}
 		self.sel = Some(id);
 		self.page = Some(Page::new(pr.clone()));
 		self.start(Job::Detail(pr));
@@ -851,6 +1070,12 @@ impl App {
 						self.tab = if self.prs.iter().any(|p| self.in_tab(p, ListTab::Mine)) { ListTab::Mine } else { ListTab::All };
 					}
 					self.fix_selection();
+					if self.page.is_none()
+						&& self.cols >= RAIL_MIN_COLS
+						&& let Some(id) = self.sel
+					{
+						self.open(id);
+					}
 				},
 				Reply::Loaded(Err(e)) => {
 					self.loading = false;
@@ -914,7 +1139,10 @@ impl App {
 
 	/// Lines for the main region (the dock takes the rest).
 	fn avail(&self) -> f64 {
-		let dock = 2.0 + if self.compose.is_some() || self.voting { 2.2 } else { 0.0 };
+		let mut dock = 2.0 + if self.compose.is_some() || self.voting { 2.2 } else { 0.0 };
+		if let Some(c) = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Jump) {
+			dock += 1.45 * self.jump_results(&c.draft).len().clamp(1, JUMP_ROWS) as f64 + 0.8;
+		}
 		(self.rows - dock - 0.5).max(6.0)
 	}
 
@@ -928,7 +1156,7 @@ impl App {
 	}
 
 	fn page_body_lines(&self) -> f64 {
-		self.avail() - 2.0 - 2.8
+		self.avail() - 6.0
 	}
 
 	/// The overview has room for the reviewers beside it.
@@ -945,10 +1173,8 @@ impl App {
 				"**Azure DevOps pull requests**\n\nEnter your organization below: its name, a `dev.azure.com` URL, or any repo URL in it. \
 				 Sign-in uses the Azure CLI (`az login`), or a PAT saved with `tern-azdo pat`.",
 			))
-		} else if let Some(p) = &self.page {
-			self.page_view(p)
 		} else {
-			self.list_view()
+			self.shell()
 		};
 		let mut dock: Vec<tern_sdk::Node<Msg>> = Vec::new();
 		if self.voting {
@@ -958,10 +1184,33 @@ impl App {
 			}
 			dock.push(row.child(html::span("Esc cancels").class("dim")).into());
 		}
+		if let Some(c) = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Jump) {
+			let ids = self.jump_results(&c.draft);
+			let at = self.jump.min(ids.len().saturating_sub(1));
+			let first = at.saturating_sub(JUMP_ROWS - 1).min(ids.len().saturating_sub(JUMP_ROWS));
+			let mut list = html::div().class("jump");
+			for id in ids.iter().skip(first).take(JUMP_ROWS) {
+				let Some(p) = self.prs.iter().find(|p| p.pull_request_id == *id) else { continue };
+				let cur = ids.get(at) == Some(id);
+				list = list.child(
+					html::div()
+						.class(if cur { "row cur" } else { "row" })
+						.on_click(Msg::Open(*id))
+						.child(html::span(format!("!{id}")).class("id"))
+						.child(html::span(p.title.clone()).class("t"))
+						.child(html::span(format!("{} \u{b7} {}", p.repository.project.name, short_name(&p.created_by.display_name))).class("pj")),
+				);
+			}
+			if ids.is_empty() {
+				list = list.child(html::div().class("row").child(html::span("No pull request matches.").class("dim")));
+			}
+			dock.push(list.into());
+		}
 		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. })) {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
+				ComposeKind::Jump => "Jump to a PR: type part of its title, author, repo or id (Up/Down choose, Enter opens, Esc cancels)".into(),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
 				ComposeKind::Comment(None) => "New comment on the pull request (Enter sends, Shift+Enter new line, Esc cancels)".into(),
 				ComposeKind::Comment(Some(_)) => "Reply (Enter sends, Shift+Enter new line, Esc cancels)".into(),
@@ -990,7 +1239,7 @@ impl App {
 
 	fn status(&self) -> ui::StatusBar<Msg> {
 		let org = self.client.as_ref().map_or("not set", |c| config::short(&c.org)).to_owned();
-		let mut s = ui::status().key("bar").child(ui::seg(org).icon("git-pull-request"));
+		let mut s = ui::status().key("bar").child(ui::seg(org.clone()).icon("git-pull-request"));
 		if let Some(me) = &self.me {
 			s = s.child(ui::seg(me.display_name.clone()).tone(Tone::Muted));
 		}
@@ -1005,81 +1254,156 @@ impl App {
 			return s.child(ui::seg(self.note.clone()));
 		}
 		let files = self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files);
-		let keys = if files {
-			"Esc back · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · s split · x whole file · n next comment · c comment on a line · a reply"
+		// Longest hint that fits beside the org and user segments; the shortest tiers keep the essentials.
+		let tiers: [&str; 4] = if files {
+			[
+				"Esc back · / jump to PR · [ ] prev/next PR · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · s split · x whole file · n next comment · c comment on a line · a reply",
+				"Esc back · / jump · [ ] PR · Tab overview · j/k file · s split · x whole · n next · c comment · a reply",
+				"Esc back · / jump · Tab · j/k · s split · n next · c · a",
+				"Esc back · Tab · j/k",
+			]
 		} else if self.page.is_some() {
-			"Esc back · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · o browser · r refresh"
+			[
+				"Esc back · / jump to PR · [ ] prev/next PR · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · o browser · r refresh",
+				"Esc back · / jump · [ ] PR · Tab files · j/k scroll · n next · a reply · c comment · v vote · o browser",
+				"Esc back · / jump · Tab · j/k · n next · a · c · v · o",
+				"Esc back · Tab · j/k",
+			]
 		} else {
-			"Enter open · j/k gg/G · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit"
+			[
+				"Enter open · / jump · j/k gg/G · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit",
+				"Enter open · / jump · j/k · 1-3 tabs · f filter · o browser · y link · r refresh",
+				"Enter open · / jump · j/k · 1-3 · f filter · o · r",
+				"Enter · j/k · f · q",
+			]
 		};
-		s.child(ui::seg(keys).side(Side::Right).tone(Tone::Muted))
+		let left = org.chars().count() + self.me.as_ref().map_or(0, |m| m.display_name.chars().count()) + 12;
+		let room = (self.cols as usize).saturating_sub(left);
+		let keys = tiers.iter().find(|t| t.chars().count() <= room).unwrap_or(&tiers[3]);
+		s.child(ui::seg(*keys).side(Side::Right).tone(Tone::Muted))
 	}
 
-	fn list_view(&self) -> ui::Col<Msg> {
-		let mut tabs = ui::tabs().key("tabs").active(self.tab.id()).on_select(|id| Msg::ListTab(id.to_owned()));
-		for t in ListTab::ALL {
-			let n = self.prs.iter().filter(|p| self.in_tab(p, t)).count();
-			tabs = tabs.tab(t.id(), format!("{} ({n})", t.label()));
+	/// The global filters as three dropdowns: which PRs (Reviewing, Created by me, All active), which project, which status.
+	fn topbar(&self) -> html::El<Msg> {
+		// A dropdown: its button (what is picked now), and when open its menu of (label, count, picked, click) items.
+		let dd = |kind: Menu, title: &str, value: String, items: Vec<(String, Option<usize>, bool, Msg)>| {
+			let open = self.menu == Some(kind);
+			let mut d = html::div().class("dd").child(
+				html::div()
+					.class(if open { "ddb on" } else { "ddb" })
+					.on_click(Msg::Menu(kind))
+					.child(html::span(title.to_owned()).class("tbl"))
+					.child(html::span(value))
+					.child(html::span(if open { "\u{25b4}" } else { "\u{25be}" }).class("az")),
+			);
+			if open {
+				let mut m = html::div().class("ddm");
+				for (label, n, on, msg) in items {
+					let mut row = html::div().class(if on { "ddi on" } else { "ddi" }).on_click(msg).child(html::span(label));
+					if let Some(n) = n {
+						row = row.child(html::span(n.to_string()).class("n"));
+					}
+					m = m.child(row);
+				}
+				d = d.child(m);
+			}
+			d
+		};
+		let show_items: Vec<_> = ListTab::ALL
+			.iter()
+			.map(|t| (t.label().to_owned(), Some(self.prs.iter().filter(|p| self.in_tab(p, *t)).count()), *t == self.tab, Msg::ListTab(t.id().to_owned())))
+			.collect();
+		let tab_n = self.prs.iter().filter(|p| self.in_tab(p, self.tab)).count();
+		let pool: Vec<&Pr> = self.prs.iter().filter(|p| self.in_tab(p, self.tab) && self.status.matches(p)).collect();
+		let mut names: Vec<&str> = pool.iter().map(|p| p.repository.project.name.as_str()).collect();
+		names.sort_by_key(|n| n.to_lowercase());
+		names.dedup();
+		let mut project_items = vec![("All projects".to_owned(), Some(pool.len()), self.project.is_none(), Msg::Project(None))];
+		for n in names {
+			let count = pool.iter().filter(|p| p.repository.project.name == n).count();
+			project_items.push((n.to_owned(), Some(count), self.project.as_deref() == Some(n), Msg::Project(Some(n.to_owned()))));
 		}
+		let status_items: Vec<_> = StatusFilter::ALL.iter().map(|f| (f.label().to_owned(), None, *f == self.status, Msg::Status(f.id().to_owned()))).collect();
+		let sort_items: Vec<_> = SortMode::ALL.iter().map(|m| (m.label().to_owned(), None, *m == self.sort, Msg::Sort(m.id().to_owned()))).collect();
+		html::div()
+			.class("topbar")
+			.child(dd(Menu::Show, "Show", format!("{} ({tab_n})", self.tab.label()), show_items))
+			.child(dd(Menu::Project, "Project", self.project.clone().unwrap_or_else(|| "All projects".to_owned()), project_items))
+			.child(dd(Menu::Status, "Status", self.status.label().to_owned(), status_items))
+			.child(dd(Menu::Sort, "Sort", self.sort.label().to_owned(), sort_items))
+	}
+
+	/// The navigation rail: the PRs the filters leave, grouped by project, each as a card with the whole title, author,
+	/// age and votes.
+	fn rail(&self) -> html::El<Msg> {
+		let mut rail = html::div().class("rail");
+		let cur = self.page.as_ref().map(|p| p.pr.pull_request_id).or(self.sel);
 		let visible = self.visible();
-		// Group headers and PR rows, then the window that keeps the selection on screen.
-		let mut rows: Vec<(Option<&Pr>, String)> = Vec::new();
-		let mut last = String::new();
-		for p in &visible {
-			let group = format!("{} / {}", p.repository.project.name, p.repository.name);
-			if group != last {
-				rows.push((None, group.clone()));
-				last = group;
-			}
-			rows.push((Some(p), String::new()));
+		if visible.is_empty() {
+			let msg = if self.loading && self.prs.is_empty() { "Loading pull requests\u{2026}" } else { "No pull requests match these filters." };
+			return rail.child(html::div().class("row rl").child(html::span(msg)));
 		}
-		let cap = self.rows_in(self.list_lines());
-		let at = rows.iter().position(|(p, _)| p.is_some_and(|p| Some(p.pull_request_id) == self.sel)).unwrap_or(0);
-		let first = at.saturating_sub(cap.saturating_sub(2)).min(rows.len().saturating_sub(cap));
 		let me = self.me_id();
-		let body = rows.iter().skip(first).take(cap).map(|(p, group)| -> tern_sdk::Node<Msg> {
-			let Some(p) = p else { return html::div().class("row grp").child(html::span(group.clone())).into() };
-			let id = p.pull_request_id;
-			let counts = api::vote_counts(p);
-			let mut row = html::div()
-				.class(if Some(id) == self.sel { "row pr cur" } else { "row pr" })
-				.on_click(Msg::Pick(id))
-				.on_dblclick(Msg::Open(id))
-				.child(html::span(format!("!{id}")).class("id"));
-			if p.is_draft {
-				row = row.child(html::span("draft").class("chip"));
+		let mut last = "";
+		for q in &visible {
+			let name = q.repository.project.name.as_str();
+			if self.sort == SortMode::Project && name != last {
+				last = name;
+				let n = visible.iter().filter(|p| p.repository.project.name == name).count();
+				rail = rail.child(html::div().class("row ph").child(html::span(name.to_owned()).class("nm")).child(html::span(n.to_string()).class("n")));
 			}
-			row = row.child(html::span(p.title.clone()).class("t"));
-			for (vote, class, glyph) in [(10, "ok", "✓"), (5, "ok", "✓~"), (-5, "wait", "⏸"), (-10, "bad", "✗")] {
+			let id = q.pull_request_id;
+			let mut meta = html::div().class("rm").child(html::span(format!("!{id}")));
+			if q.is_draft {
+				meta = meta.child(html::span("draft").class("chip"));
+			}
+			if self.sort != SortMode::Project {
+				meta = meta.child(html::span(name.to_owned()));
+			}
+			meta = meta.child(html::span(short_name(&q.created_by.display_name))).child(html::span(age(&q.creation_date)));
+			let counts = api::vote_counts(q);
+			for (vote, class, glyph) in [(10, "ok", "\u{2713}"), (5, "ok", "\u{2713}~"), (-5, "wait", "\u{23f8}"), (-10, "bad", "\u{2717}")] {
 				if let Some(n) = counts.get(&vote) {
-					row = row.child(html::span(format!("{glyph}{n}")).class(class));
+					meta = meta.child(html::span(format!("{glyph}{n}")).class(class));
 				}
 			}
-			if let Some(v) = p.vote_of(me).filter(|v| *v != 0 && p.created_by.id != me) {
+			if let Some(v) = q.vote_of(me).filter(|v| *v != 0 && q.created_by.id != me) {
 				let (g, class) = vote_glyph(v);
-				row = row.child(html::span(format!("you {g}")).class(class));
+				meta = meta.child(html::span(format!("you {g}")).class(class));
 			}
-			row.child(html::span(format!("{} · {} · {} → {}", p.created_by.display_name, age(&p.creation_date), p.source(), p.target())).class("m"))
-				.into()
-		});
-		let empty = if self.loading && self.prs.is_empty() {
-			Some("Loading pull requests…".to_owned())
-		} else if visible.is_empty() {
-			Some(if self.filter.is_empty() { "Nothing here.".to_owned() } else { format!("Nothing matches \u{201c}{}\u{201d}.", self.filter) })
-		} else {
-			None
-		};
-		let mut list = html::div().class("box").children(body);
-		if let Some(e) = empty {
-			list = list.child(html::div().class("row grp").child(html::span(e)));
+			rail = rail.child(
+				html::div()
+					.class(if Some(id) == cur { "rpr cur" } else { "rpr" })
+					.on_click(Msg::Open(id))
+					.child(html::div().class("rt").child(html::span(q.title.clone())))
+					.child(meta),
+			);
 		}
-		let lines = self.list_lines();
-		ui::col()
-			.child(tabs)
-			.child(ui::col().key("list").min(ui::Bound::h(ui::Extent::Lines(lines))).max(ui::Bound::h(ui::Extent::Lines(lines))).child(list))
+		rail
 	}
 
-	fn page_view(&self, p: &Page) -> ui::Col<Msg> {
+	/// The whole screen: the filter bar over the navigation rail and the open pull request (the rail alone on a narrow
+	/// pane until one is opened).
+	fn shell(&self) -> ui::Col<Msg> {
+		let lines = self.avail() - 0.5;
+		let wide = self.cols >= RAIL_MIN_COLS;
+		// An explicit height: a percentage does not resolve through the native column, and the page would shrink to the rail.
+		let mut shell = html::div().class("shell").attr("style", format!("height:{:.0}px", lines * self.cell_h * CSS_PER_CELL_H));
+		match (&self.page, wide) {
+			(Some(p), true) => shell = shell.child(self.topbar()).child(html::div().class("lw").child(self.rail()).child(self.page_pane(p))),
+			(Some(p), false) => shell = shell.child(self.page_pane(p)),
+			(None, true) => {
+				let msg = if self.loading && self.prs.is_empty() { "Loading pull requests\u{2026}" } else { "Pick a pull request." };
+				let pane = html::div().class("lwm").child(html::div().class("azmsg").child(html::span(msg)));
+				shell = shell.child(self.topbar()).child(html::div().class("lw").child(self.rail()).child(pane));
+			},
+			(None, false) => shell = shell.child(self.topbar()).child(self.rail().class("rail full")),
+		}
+		ui::col().child(ui::col().key("pbody").min(ui::Bound::h(ui::Extent::Lines(lines))).max(ui::Bound::h(ui::Extent::Lines(lines))).child(shell))
+	}
+
+	/// One pull request: its title, author and branches, the tabs, then the page. Nothing here moves when you switch PRs.
+	fn page_pane(&self, p: &Page) -> html::El<Msg> {
 		let pr = &p.pr;
 		let mut head = html::div().class("head").child(html::span(format!("!{}", pr.pull_request_id)).class("id")).child(html::span(pr.title.clone()).class("title"));
 		if pr.is_draft {
@@ -1097,30 +1421,24 @@ impl App {
 			.child(html::span("into").class("dim"))
 			.child(html::span(pr.target().to_owned()).class("br"))
 			.child(html::span(format!("{} / {}", pr.repository.project.name, pr.repository.name)).class("dim right"))
-			.child(html::span("·").class("dim"))
+			.child(html::span("\u{b7}").class("dim"))
 			.child(time(&pr.creation_date, ""));
 		let files = p.detail.as_ref().map_or(0, |d| d.changes.len());
-		let tabs = ui::tabs()
-			.key("ptabs")
-			.tab("overview", "Overview")
-			.tab("files", format!("Files ({files})"))
-			.active(if p.tab == PrTab::Files { "files" } else { "overview" })
-			.on_select(|id| Msg::PrTab(id.to_owned()));
-		let lines = self.page_body_lines();
+		let tab = |id: &str, label: String, on: bool| html::span(label).class(if on { "ptab on" } else { "ptab" }).on_click(Msg::PrTab(id.to_owned()));
+		let tabs = html::div()
+			.class("ptabs")
+			.child(tab("overview", "Overview".into(), p.tab != PrTab::Files))
+			.child(tab("files", format!("Files ({files})"), p.tab == PrTab::Files));
 		let body: tern_sdk::Node<Msg> = if let Some(e) = &p.error {
 			html::div().class("box scroll").child(ui::md(format!("Could not load this pull request.\n\n{e}"))).into()
 		} else if p.detail.is_none() {
-			html::div().class("box scroll").child(html::span("Loading…").class("dim")).into()
+			html::div().class("box scroll").child(html::span("Loading\u{2026}").class("dim")).into()
 		} else if p.tab == PrTab::Files {
 			self.files_view(p).into()
 		} else {
 			self.overview(p).into()
 		};
-		ui::col()
-			.child(head)
-			.child(sub)
-			.child(tabs)
-			.child(ui::col().key("pbody").min(ui::Bound::h(ui::Extent::Lines(lines))).max(ui::Bound::h(ui::Extent::Lines(lines))).child(body))
+		html::div().class("lwm").child(head).child(sub).child(tabs).child(html::div().class("pbb").child(body))
 	}
 
 	/// A comment thread as a card: where it is, the code it is about, then every comment in full.
@@ -1198,7 +1516,7 @@ impl App {
 				("●", "acc", format!("{open} of {} comment threads active", threads.len()))
 			});
 		}
-		html::div().class("card").children(
+		html::div().class("card").child(html::div().class("ch").child(html::span("Review status"))).children(
 			rows.into_iter().map(|(g, class, text)| html::div().class("st").child(html::span(g).class(format!("gl {class}"))).child(html::span(text))),
 		)
 	}
@@ -1582,6 +1900,12 @@ impl App {
 					self.note = "that does not look like an Azure DevOps organization".into();
 				},
 			},
+			ComposeKind::Jump => {
+				let ids = self.jump_results(&text);
+				if let Some(id) = ids.get(self.jump.min(ids.len().saturating_sub(1))).copied() {
+					self.open(id);
+				}
+			},
 			ComposeKind::Filter => {
 				self.filter = text.trim().to_owned();
 				self.fix_selection();
@@ -1648,6 +1972,30 @@ impl App {
 			self.compose = None;
 			return true;
 		}
+		if kind == ComposeKind::Jump {
+			let n = self.compose.as_ref().map_or(0, |c| self.jump_results(&c.draft).len());
+			let last = n.saturating_sub(1);
+			match key.name.as_str() {
+				"down" | "tab" if !key.shift => self.jump = (self.jump + 1).min(last),
+				"up" | "tab" => self.jump = self.jump.saturating_sub(1),
+				"n" if key.ctrl => self.jump = (self.jump + 1).min(last),
+				"p" if key.ctrl => self.jump = self.jump.saturating_sub(1),
+				"page_down" => self.jump = (self.jump + JUMP_ROWS).min(last),
+				"page_up" => self.jump = self.jump.saturating_sub(JUMP_ROWS),
+				_ => {
+					let Some(c) = &mut self.compose else { return false };
+					if key.name == "enter" {
+						let text = std::mem::take(&mut c.draft);
+						self.send(text);
+						return true;
+					}
+					c.key(key);
+					self.jump = 0;
+					return false;
+				},
+			}
+			return true;
+		}
 		let Some(c) = &mut self.compose else { return false };
 		let multiline = matches!(kind, ComposeKind::Comment(_) | ComposeKind::Inline { .. });
 		if key.name == "enter" {
@@ -1669,6 +2017,10 @@ impl App {
 
 	/// A key with nothing else taking it. False to quit.
 	fn key(&mut self, key: &Key) -> bool {
+		if self.menu.is_some() && key.is("escape") {
+			self.menu = None;
+			return true;
+		}
 		if self.voting {
 			self.voting = false;
 			let vote = match key.name.as_str() {
@@ -1688,6 +2040,12 @@ impl App {
 		}
 		if key.is("ctrl+q") {
 			return false;
+		}
+		let plain_slash = key.name == "/" && !key.ctrl && !key.alt;
+		if plain_slash || key.is("ctrl+k") {
+			self.jump = 0;
+			self.compose = Some(Composer::new(ComposeKind::Jump, String::new()));
+			return true;
 		}
 		if key.is("ctrl+f") && self.page.is_none() {
 			self.compose = Some(Composer::new(ComposeKind::Filter, self.filter.clone()));
@@ -1798,7 +2156,7 @@ impl App {
 				self.fix_selection();
 			},
 			// Tern can keep `/` for itself, so `f` and Ctrl+F open the filter too.
-			"/" | "f" => self.compose = Some(Composer::new(ComposeKind::Filter, self.filter.clone())),
+			"f" => self.compose = Some(Composer::new(ComposeKind::Filter, self.filter.clone())),
 			"escape" if !self.filter.is_empty() => {
 				self.filter.clear();
 				self.fix_selection();
@@ -1815,11 +2173,14 @@ impl App {
 			"escape" | "backspace" | "q" => {
 				if p.thread.is_some() {
 					p.thread = None;
-				} else {
+				} else if self.cols < RAIL_MIN_COLS {
+					// Narrow: back to the navigation rail. Wide: the rail is always there.
 					self.page = None;
 					self.fix_selection();
 				}
 			},
+			"]" => self.step_pr(true),
+			"[" => self.step_pr(false),
 			"tab" | "1" | "2" => {
 				p.tab = match key.name.as_str() {
 					"1" => PrTab::Overview,
@@ -1868,9 +2229,28 @@ impl App {
 
 	fn msg(&mut self, msg: Msg) {
 		match msg {
-			Msg::Pick(id) => self.sel = Some(id),
+			Msg::Sort(id) => {
+				self.menu = None;
+				if let Some(m) = SortMode::ALL.into_iter().find(|m| m.id() == id) {
+					self.sort = m;
+				}
+			},
+			Msg::Menu(m) => self.menu = if self.menu == Some(m) { None } else { Some(m) },
+			Msg::Project(n) => {
+				self.menu = None;
+				self.project = n;
+				self.fix_selection();
+			},
+			Msg::Status(id) => {
+				self.menu = None;
+				if let Some(f) = StatusFilter::ALL.into_iter().find(|f| f.id() == id) {
+					self.status = f;
+					self.fix_selection();
+				}
+			},
 			Msg::Open(id) => self.open(id),
 			Msg::ListTab(id) => {
+				self.menu = None;
 				if let Some(t) = ListTab::ALL.into_iter().find(|t| t.id() == id) {
 					self.tab = t;
 					self.fix_selection();
@@ -1929,9 +2309,13 @@ impl App {
 					if !c.apply(&e) {
 						self.note = "the comment box got out of step; press Esc and start again".into();
 					}
-					if c.kind == ComposeKind::Filter {
-						self.filter = c.draft.clone();
-						self.fix_selection();
+					match c.kind {
+						ComposeKind::Filter => {
+							self.filter = c.draft.clone();
+							self.fix_selection();
+						},
+						ComposeKind::Jump => self.jump = 0,
+						_ => {},
 					}
 				}
 			},
