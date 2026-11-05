@@ -47,6 +47,18 @@ impl Kind {
 		}
 	}
 
+	/// What the confirmation modal calls it.
+	pub fn title(self) -> &'static str {
+		match self {
+			Kind::Review => "Review with AI",
+			Kind::Context => "Add as context",
+			Kind::Explain => "Explain this comment",
+			Kind::Respond => "Draft a reply",
+			Kind::ExplainCode => "Explain this code",
+			Kind::ReviewCode => "Review this code",
+		}
+	}
+
 	pub fn default_prompt(self) -> &'static str {
 		match self {
 			Kind::Review => REVIEW,
@@ -257,21 +269,16 @@ pub fn show(path: &Path) -> String {
 pub struct Dir {
 	pub name: String,
 	pub path: std::path::PathBuf,
-	/// It holds a `.git`.
-	pub git:  bool,
 }
 
-/// The folders inside `dir`, by name, without hidden ones.
+/// The folders inside `dir`, by name, without hidden ones. One read of the folder, no looking inside them.
 pub fn subdirs(dir: &Path) -> Vec<Dir> {
 	let mut v: Vec<Dir> = std::fs::read_dir(dir)
 		.into_iter()
 		.flatten()
 		.flatten()
-		.filter(|e| e.path().is_dir())
-		.map(|e| {
-			let path = e.path();
-			Dir { name: e.file_name().to_string_lossy().into_owned(), git: path.join(".git").exists(), path }
-		})
+		.filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) || e.path().is_dir())
+		.map(|e| Dir { name: e.file_name().to_string_lossy().into_owned(), path: e.path() })
 		.filter(|d| !d.name.starts_with('.'))
 		.collect();
 	v.sort_by_key(|d| d.name.to_lowercase());
@@ -297,46 +304,6 @@ pub fn fuzzy(q: &str, hay: &str) -> Option<i32> {
 		}
 	}
 	(qi == q.len()).then(|| score - h.len() as i32 / 4)
-}
-
-/// Folders matching `q` near `dir`: inside it (three levels down), and beside it with theirs (two levels), best first.
-pub fn search(dir: &Path, q: &str) -> Vec<Dir> {
-	const SKIP: [&str; 6] = ["node_modules", "target", "bin", "obj", "dist", "packages"];
-	let mut seen = std::collections::HashSet::new();
-	let mut found: Vec<(i32, Dir)> = Vec::new();
-	let mut visited = 0;
-	let mut roots = vec![(dir.to_path_buf(), 3, String::new())];
-	if let Some(parent) = dir.parent() {
-		roots.push((parent.to_path_buf(), 2, String::new()));
-	}
-	for (root, depth, _) in roots {
-		let mut level = vec![(root.clone(), String::new())];
-		for _ in 0..depth {
-			let mut next = Vec::new();
-			for (base, label) in &level {
-				for d in subdirs(base) {
-					visited += 1;
-					if visited > 4000 {
-						break;
-					}
-					let rel = if label.is_empty() { d.name.clone() } else { format!("{label}/{}", d.name) };
-					if !seen.insert(d.path.clone()) {
-						continue;
-					}
-					let by_name = fuzzy(q, &d.name).map(|n| n + 30);
-					if let Some(score) = by_name.or_else(|| fuzzy(q, &rel)) {
-						found.push((score + if d.git { 20 } else { 0 }, Dir { name: rel.clone(), path: d.path.clone(), git: d.git }));
-					}
-					if !SKIP.contains(&d.name.as_str()) {
-						next.push((d.path, rel));
-					}
-				}
-			}
-			level = next;
-		}
-	}
-	found.sort_by_key(|(score, d)| (std::cmp::Reverse(*score), d.name.len()));
-	found.into_iter().take(60).map(|(_, d)| d).collect()
 }
 
 #[cfg(test)]

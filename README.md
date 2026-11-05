@@ -45,17 +45,23 @@ Sort by newest or oldest and the list runs across every project at once. With th
 
 **Review with AI.** Two buttons at the top of every PR start a coding agent in a new Tern block, beside the plugin, in your local checkout of that repo: Review with AI (`i`) asks for a review of the diff, and Add as context (`t`) has it read the PR and wait for your questions. On a comment thread, Explain (`e`) and Respond with AI (`w`) ask the agent to explain the comment or draft a reply. Click a line number in the diff and the comment box has Explain with AI and Review with AI for that line, with the code around it and anything you have typed so far. Nothing is posted to the PR; the agent only reads and answers.
 
-Questions appear where you asked them: the folder picker and prompt editor open as a panel under the buttons, inside the comment you clicked, or inside the line's comment box, never at the bottom of the screen.
-
 <p align="center"><img src="docs/ai-line.png" alt="The comment box under a diff line, with Explain with AI and Review with AI beside Cancel and Comment" width="900"></p>
 
-**The checkout is found for you.** The first time in a repo, tern-azdo looks where it was started: that folder's clone, or a folder named like the repo inside it or beside it, and uses it without asking. If it finds none, a picker opens next to the button: it starts in the folder the plugin started in, lists the folder above, the folders inside and the folders beside it, and you click to move around. Type to fuzzy-search folders in the current folder, its siblings and a few levels below (clones rank first); Enter uses the highlighted one.
+**See it before it runs.** Every one of those opens a confirmation first. It shows exactly what the agent will be told, with the PR's real description, files and comments filled in, plus the folder it will run in, the agent and the template, each with a Change or Edit link. Enter starts it, Esc closes it.
 
-<p align="center"><img src="docs/ai-picker.png" alt="The folder picker open under the AI buttons, searching for scr, with matching folders ranked" width="900"></p>
+<p align="center"><img src="docs/ai-confirm.png" alt="The confirmation modal: the filled-in prompt, with the checkout folder, agent and template above it and a Start agent button" width="900"></p>
 
-**Prompts you won't need to change, and can.** Every kind (review, context, explain, respond, explain code, review code) starts from a default that runs `git fetch`, reads the diff and the code, and reports without touching anything. The gear (`I`) edits any of them per repo, or the checkout folder or agent (`claude`, `codex`, or any command line with `{prompt}` where the prompt goes). The editor lists the variables: `{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments}`, plus `{thread} {file} {line} {comment} {code}` for comment and line prompts. Preview shows the prompt with the PR's real values filled in (`Ctrl+P`). A prompt you never changed is not saved, so better defaults reach you.
+**A template per kind, per repo.** Edit lets you rewrite the template with the filled-in result live underneath. Every kind (review, context, explain, respond, explain code, review code) starts from a default that runs `git fetch`, reads the diff and the code, and reports without touching anything, so most people never change it. The variables are `{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments}`, plus `{thread} {file} {line} {comment} {code}` for comment and line prompts. A template you never changed is not saved, so better defaults reach you. The gear (`I`) opens the same editor without starting anything.
 
-<p align="center"><img src="docs/ai-prompt.png" alt="Editing the review prompt in a panel under the gear: the variables, the rendered preview, and the prompt editor" width="900"></p>
+<p align="center"><img src="docs/ai-template.png" alt="Editing a template: the variables, the template, and the filled-in result below it" width="900"></p>
+
+**One field for the folder.** The first time in a repo, tern-azdo looks where it was started (that folder's clone, or a folder named like the repo inside or beside it) and uses it without asking. If it finds none, the folder field opens already filled with the path it started in. Everything up to the last `\` or `/` is the folder listed; what follows filters it, so editing the path is how you search: delete the last name to see its siblings, add a separator to look inside. Tab or a click opens the highlighted folder, left goes up, and Enter uses it. Only the one folder is read, so it stays instant on big drives.
+
+<p align="center"><img src="docs/ai-picker.png" alt="The folder field showing a path, with the folder's siblings listed and the current one marked" width="900"></p>
+
+**You can see it is running.** The button that started an agent reads "Running" for a while and then comes back to ready, so a second click does not start a second agent by accident.
+
+<p align="center"><img src="docs/ai-running.png" alt="The Review with AI button reading Running while the agent block opens beside it" width="600"></p>
 
 **Review without leaving.** Vote (approve, approve with suggestions, wait for author, reject), start a comment thread, or reply to one. Open the PR in the browser, or copy its link or source branch.
 
@@ -135,7 +141,7 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 | `}` / `{` | Next / previous change in the diff |
 | `i` / `t` | AI review / add the PR as context |
 | `e` / `w` | AI explain / reply on the selected comment |
-| `I` | AI settings: prompts, checkout folder, agent |
+| `I` | AI settings: templates, folder, agent |
 | `/`, `Ctrl+K` | Jump to any PR |
 | `[` / `]` | Previous / next PR |
 | `Esc` | Leave the thread you are on (narrow pane: back to the navigator) |
