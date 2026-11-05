@@ -9,7 +9,47 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Config {
 	/// `https://dev.azure.com/<org>`.
-	pub org: String,
+	#[serde(default)]
+	pub org:   String,
+	/// "Review with AI" settings per repo, keyed `project/repo` in lower case.
+	#[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+	pub repos: std::collections::BTreeMap<String, Review>,
+}
+
+/// How "Review with AI" runs for one repo.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Review {
+	/// A local checkout of the repo: the agent block starts here.
+	pub dir:     String,
+	/// `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes (else it is appended).
+	pub agent:   String,
+	/// Prompts that replace the defaults, by kind (`review`, `context`, `explain`, `respond`).
+	#[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+	pub prompts: std::collections::BTreeMap<String, String>,
+}
+
+/// The key a repo's review settings are saved under.
+pub fn repo_key(project: &str, repo: &str) -> String {
+	format!("{project}/{repo}").to_lowercase()
+}
+
+/// A repo's saved review settings.
+pub fn review(key: &str) -> Option<Review> {
+	load()?.repos.get(key).cloned()
+}
+
+/// Save one repo's review settings, keeping the rest of the config.
+pub fn save_review(key: &str, review: Review) -> anyhow::Result<()> {
+	let mut config = load().unwrap_or_default();
+	config.repos.insert(key.to_owned(), review);
+	save(&config)
+}
+
+/// Save the organization, keeping the rest of the config.
+pub fn save_org(org: &str) -> anyhow::Result<()> {
+	let mut config = load().unwrap_or_default();
+	config.org = org.to_owned();
+	save(&config)
 }
 
 /// The folder for `config.json`.

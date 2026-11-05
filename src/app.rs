@@ -18,6 +18,7 @@ use tern_sdk::{
 };
 
 use crate::{
+	review,
 	api::{self, Client, Detail, Identity, Pr, Thread},
 	config,
 	diff::{self, FileDiff},
@@ -31,6 +32,10 @@ const CSS_PER_CELL_H: f64 = 0.78;
 const ROW_PX: f64 = 22.0;
 /// Context lines around each change; `x` shows the whole file.
 const CONTEXT: usize = 3;
+/// Lines the prompt preview takes.
+const PREVIEW_LINES: f64 = 9.0;
+/// Lines of the file shown above a change when a jump scrolls to it.
+const JUMP_LEAD: usize = 5;
 /// The pane width (in columns) from which the navigation rail shows; below it `/` jumps between PRs.
 const RAIL_MIN_COLS: f64 = 110.0;
 /// Results the switcher shows at once.
@@ -78,6 +83,14 @@ const CSS: &str = "\
 .ddi .n{margin-left:auto;color:var(--sf-c-muted);font-variant-numeric:tabular-nums}\
 .ptabs{display:flex;gap:4px;margin:2px 4px 0;border-bottom:1px solid color-mix(in srgb,var(--sf-c-muted) 28%,transparent);flex-shrink:0}\
 .ptab{padding:6px 12px;cursor:pointer;color:var(--sf-c-muted);border-bottom:2px solid transparent}\
+.rvd{margin-left:2px;align-self:center}.rvd .ddm{left:auto;right:0;min-width:230px}.rvg.on{color:inherit}\
+.rvb.sec{margin-left:0;margin-right:2px;background:transparent;border-color:color-mix(in srgb,var(--sf-c-muted) 50%,transparent)}\
+.cact{display:flex;gap:10px;padding:4px 0 0 36px}.cab{color:var(--sf-c-muted);cursor:pointer;font-size:12px}.cab:hover{color:var(--sf-c-accent)}\
+.rvp{overflow:hidden;white-space:nowrap}.pvt{cursor:pointer;color:var(--sf-c-accent);font-weight:600}.pvt.on{text-decoration:underline}\
+.pvb{height:100%;min-height:0;box-sizing:border-box;overflow-y:auto;white-space:pre-wrap;padding:6px 10px;border:1px solid var(--sf-c-accent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.5px}\
+.rvb{margin-left:auto;align-self:center;padding:3px 12px;border-radius:6px;cursor:pointer;font-weight:600;background:color-mix(in srgb,var(--sf-c-accent) 22%,transparent);border:1px solid var(--sf-c-accent)}\
+.rvb:hover{background:color-mix(in srgb,var(--sf-c-accent) 38%,transparent)}\
+.rvg{align-self:center;padding:3px 8px;cursor:pointer;color:var(--sf-c-muted)}.rvg:hover{color:inherit}\
 .ptab:hover{color:inherit}.ptab.on{color:inherit;font-weight:600;border-bottom-color:var(--sf-c-accent)}\
 .head{flex-shrink:0}\
 .jump{box-sizing:border-box;padding:4px;border:1px solid var(--sf-c-accent);border-radius:6px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;overflow:hidden}\
@@ -211,6 +224,18 @@ enum Msg {
 	/// The line comment box's buttons.
 	Cancel,
 	Submit,
+	/// The next (true) or previous change in the diff.
+	Change(bool),
+	/// Start an AI agent on the PR, or on a comment thread, setting the repo up first when it has no checkout yet.
+	Ai(review::Kind, Option<u32>),
+	/// The gear: show or hide the review settings menu.
+	ReviewMenu,
+	/// The menu: edit one kind of prompt.
+	EditPrompt(review::Kind),
+	/// The menu: this repo's checkout and agent.
+	ReviewSetup,
+	/// Show or hide the prompt preview.
+	Preview,
 	Send(String),
 	/// Native editing changed the composer's text.
 	Edit(wire::Edit),
@@ -354,6 +379,12 @@ enum ComposeKind {
 	Comment(Option<u32>),
 	/// The quick switcher: type to pick any pull request.
 	Jump,
+	/// Review settings, step 1: the local checkout of the repo.
+	ReviewDir,
+	/// Step 2: which agent to run.
+	ReviewAgent,
+	/// Edit one kind of prompt.
+	ReviewPrompt(review::Kind),
 	/// The line an inline comment goes on.
 	Line,
 	/// An inline comment on a line of the selected file (the old side when `left`).
@@ -464,11 +495,29 @@ struct Page {
 	thread:  Option<u32>,
 	/// A thread to scroll the diff to once the selected file loads.
 	pending: Option<u32>,
+	/// The change the last jump went to (its place in the file's list of changes).
+	change:  Option<usize>,
+	/// A jump to make once the selected file loads: its first change (true) or last (false).
+	go:      Option<bool>,
 }
 
 impl Page {
 	fn new(pr: Pr) -> Self {
-		Self { pr, tab: PrTab::Overview, detail: None, error: None, file: 0, files: HashMap::new(), split: false, folded: HashSet::new(), full: false, thread: None, pending: None }
+		Self {
+			pr,
+			tab: PrTab::Overview,
+			detail: None,
+			error: None,
+			file: 0,
+			files: HashMap::new(),
+			split: false,
+			folded: HashSet::new(),
+			full: false,
+			thread: None,
+			pending: None,
+			change: None,
+			go: None,
+		}
 	}
 
 	fn change(&self) -> Option<&api::Change> {
@@ -549,6 +598,14 @@ impl Page {
 		self.change().is_some_and(|c| matches!(self.files.get(c.path()), Some(FileState::Ready { .. })))
 	}
 
+	/// The selected file's diff, when it has lines to show.
+	fn diff(&self) -> Option<&FileDiff> {
+		match self.files.get(self.change()?.path())? {
+			FileState::Ready { diff, .. } if !diff.is_empty() => Some(diff),
+			_ => None,
+		}
+	}
+
 }
 
 struct App {
@@ -568,6 +625,15 @@ struct App {
 	sort:    SortMode,
 	/// The highlighted result in the switcher.
 	jump:    usize,
+	/// The review settings being edited, the key of the repo they belong to, and whether to start the agent when saved.
+	review:  config::Review,
+	review_key: String,
+	/// What to run once the repo's checkout and agent are set (a kind, and the comment thread for comment prompts).
+	review_next: Option<(review::Kind, Option<u32>)>,
+	/// The review settings menu behind the gear is open.
+	rv_menu: bool,
+	/// Show the prompt being edited with its variables filled in.
+	preview: bool,
 	page:    Option<Page>,
 	compose: Option<Composer>,
 	voting:  bool,
@@ -652,7 +718,14 @@ fn when_full(when: &str) -> String {
 /// `PS` for Priya Shah.
 /// Lines `from..to` of a diff: clickable line numbers beside highlighted code, side by side when `split`.
 fn segment(d: &FileDiff, from: usize, to: usize, split: bool, lang: &str) -> tern_sdk::Node<Msg> {
-	let (left, right) = diff::cells(&d.lines[from..to], split);
+	let (mut left, mut right) = diff::cells(&d.lines[from..to], split);
+	// A segment that starts at a new hunk keeps the gap mark the cut took away.
+	if from > 0 && d.lines[from].hunk != d.lines[from - 1].hunk {
+		left.insert(0, diff::Cell::Gap);
+		if split {
+			right.insert(0, diff::Cell::Gap);
+		}
+	}
 	let seg = html::div().key(format!("s{from}")).class(if split { "azseg split" } else { "azseg" });
 	if split {
 		seg.child(side(&left, Some(true), lang)).child(side(&right, Some(false), lang)).into()
@@ -839,6 +912,11 @@ impl App {
 			status: StatusFilter::Any,
 			sort: SortMode::Project,
 			jump: 0,
+			review: config::Review::default(),
+			review_key: String::new(),
+			review_next: None,
+			rv_menu: false,
+			preview: false,
 			page: None,
 			compose: None,
 			voting: false,
@@ -1050,7 +1128,15 @@ impl App {
 					*diff = diff::build(a, b, context);
 				}
 			}
+			p.change = None;
+			// The whole file opens at its first change, the changes at the top.
+			if p.full && p.file_ready() {
+				p.go = Some(true);
+			} else {
+				self.scroll_req = Some(ScrollReq::By(ScrollBy::Start));
+			}
 		}
+		self.finish_go();
 	}
 
 	/// Handles finished jobs. True when something changed.
@@ -1116,8 +1202,15 @@ impl App {
 					};
 					let current = p.change().is_some_and(|c| c.path() == path);
 					p.files.insert(path, state);
+					// The whole file opens at its first change.
+					let go = current && p.pending.is_none() && (p.go.is_some() || p.full);
+					if go {
+						p.go.get_or_insert(true);
+					}
 					if current && let Some(id) = p.pending.take() {
 						self.scroll_req = Some(ScrollReq::Reveal(format!("{FILES_DS}.t{id}")));
+					} else if go {
+						self.finish_go();
 					}
 				},
 				Reply::Wrote(id, what, r) => match r {
@@ -1142,6 +1235,9 @@ impl App {
 		let mut dock = 2.0 + if self.compose.is_some() || self.voting { 2.2 } else { 0.0 };
 		if let Some(c) = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Jump) {
 			dock += 1.45 * self.jump_results(&c.draft).len().clamp(1, JUMP_ROWS) as f64 + 0.8;
+		}
+		if self.compose.as_ref().is_some_and(|c| matches!(c.kind, ComposeKind::ReviewPrompt(_))) {
+			dock += 2.2 + if self.preview { PREVIEW_LINES + 0.5 } else { 0.0 };
 		}
 		(self.rows - dock - 0.5).max(6.0)
 	}
@@ -1206,10 +1302,33 @@ impl App {
 			}
 			dock.push(list.into());
 		}
+		if let Some(c) = self.compose.as_ref().filter(|c| matches!(c.kind, ComposeKind::ReviewPrompt(_))) {
+			dock.push(
+				html::div()
+					.class("prompt rvp")
+					.child(html::span(if self.preview { "Preview on" } else { "Preview" }).class(if self.preview { "pvt on" } else { "pvt" }).on_click(Msg::Preview))
+					.child(html::span(review::NAMES).class("dim"))
+					.into(),
+			);
+			if self.preview {
+				let text = self.prompt_preview(&c.draft);
+				let lines = PREVIEW_LINES;
+				dock.push(
+					ui::col()
+						.min(ui::Bound::h(ui::Extent::Lines(lines)))
+						.max(ui::Bound::h(ui::Extent::Lines(lines)))
+						.child(html::div().class("pvb").grow(1.0).child(html::span(text)))
+						.into(),
+				);
+			}
+		}
 		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. })) {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
+				ComposeKind::ReviewDir => "AI setup (1/2): local checkout of this repo, where the agent starts (Enter next, Esc cancels)".into(),
+				ComposeKind::ReviewAgent => "AI setup (2/2): agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
+				ComposeKind::ReviewPrompt(k) => format!("The {} prompt for this repo (Enter saves, Shift+Enter new line, Ctrl+P preview, Esc cancels)", k.label()),
 				ComposeKind::Jump => "Jump to a PR: type part of its title, author, repo or id (Up/Down choose, Enter opens, Esc cancels)".into(),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
 				ComposeKind::Comment(None) => "New comment on the pull request (Enter sends, Shift+Enter new line, Esc cancels)".into(),
@@ -1257,15 +1376,15 @@ impl App {
 		// Longest hint that fits beside the org and user segments; the shortest tiers keep the essentials.
 		let tiers: [&str; 4] = if files {
 			[
-				"Esc back · / jump to PR · [ ] prev/next PR · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · s split · x whole file · n next comment · c comment on a line · a reply",
-				"Esc back · / jump · [ ] PR · Tab overview · j/k file · s split · x whole · n next · c comment · a reply",
+				"Esc back · / jump to PR · [ ] prev/next PR · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · { } change · s split · x whole file · n next comment · c comment on a line · a reply · i AI review",
+				"Esc back · / jump · [ ] PR · Tab overview · j/k file · { } change · s split · x whole · n next · c comment · a reply · i AI",
 				"Esc back · / jump · Tab · j/k · s split · n next · c · a",
 				"Esc back · Tab · j/k",
 			]
 		} else if self.page.is_some() {
 			[
-				"Esc back · / jump to PR · [ ] prev/next PR · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · o browser · r refresh",
-				"Esc back · / jump · [ ] PR · Tab files · j/k scroll · n next · a reply · c comment · v vote · o browser",
+				"Esc back · / jump to PR · [ ] prev/next PR · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · i AI review · t context · e explain · w reply · o browser · r refresh",
+				"Esc back · / jump · [ ] PR · Tab files · j/k scroll · n next · a reply · c comment · v vote · i AI · o browser",
 				"Esc back · / jump · Tab · j/k · n next · a · c · v · o",
 				"Esc back · Tab · j/k",
 			]
@@ -1427,7 +1546,10 @@ impl App {
 		let tabs = html::div()
 			.class("ptabs")
 			.child(tab("overview", "Overview".into(), p.tab != PrTab::Files))
-			.child(tab("files", format!("Files ({files})"), p.tab == PrTab::Files));
+			.child(tab("files", format!("Files ({files})"), p.tab == PrTab::Files))
+			.child(html::span("Review with AI").class("rvb").title("Start an AI agent that reviews this pull request (i)").on_click(Msg::Ai(review::Kind::Review, None)))
+			.child(html::span("Add as context").class("rvb sec").title("Start an AI agent that has read this pull request and waits for your questions (t)").on_click(Msg::Ai(review::Kind::Context, None)))
+			.child(self.review_menu());
 		let body: tern_sdk::Node<Msg> = if let Some(e) = &p.error {
 			html::div().class("box scroll").child(ui::md(format!("Could not load this pull request.\n\n{e}"))).into()
 		} else if p.detail.is_none() {
@@ -1438,6 +1560,25 @@ impl App {
 			self.overview(p).into()
 		};
 		html::div().class("lwm").child(head).child(sub).child(tabs).child(html::div().class("pbb").child(body))
+	}
+
+	/// The gear beside the AI buttons and the menu it opens: edit each prompt, or the checkout and agent.
+	fn review_menu(&self) -> html::El<Msg> {
+		let mut d = html::div().class("dd rvd").child(
+			html::span("\u{2699}")
+				.class(if self.rv_menu { "rvg on" } else { "rvg" })
+				.title("AI settings for this repo: prompts, checkout, agent (I)")
+				.on_click(Msg::ReviewMenu),
+		);
+		if self.rv_menu {
+			let mut m = html::div().class("ddm");
+			for k in review::Kind::ALL {
+				m = m.child(html::div().class("ddi").on_click(Msg::EditPrompt(k)).child(html::span(format!("Edit the {} prompt", k.label()))));
+			}
+			m = m.child(html::div().class("ddi").on_click(Msg::ReviewSetup).child(html::span("Checkout folder and agent")));
+			d = d.child(m);
+		}
+		d
 	}
 
 	/// A comment thread as a card: where it is, the code it is about, then every comment in full.
@@ -1469,8 +1610,14 @@ impl App {
 			let body = html::div().class("cmb").child(meta).child(ui::md(c.content.clone().unwrap_or_default()));
 			card = card.child(html::div().class(if i == 0 { "cm" } else { "cm rep" }).child(avatar(&c.author.display_name)).child(body));
 		}
+		card = card.child(
+			html::div()
+				.class("cact")
+				.child(html::span("Explain").class("cab").title("Ask an AI agent to explain this comment (e)").on_click(Msg::Ai(review::Kind::Explain, Some(t.id))))
+				.child(html::span("Respond with AI").class("cab").title("Ask an AI agent to draft a reply (w)").on_click(Msg::Ai(review::Kind::Respond, Some(t.id)))),
+		);
 		if selected {
-			card = card.child(html::div().class("hint").child(html::span("a reply · n next · Esc done")));
+			card = card.child(html::div().class("hint").child(html::span("a reply · e explain · w AI reply · n next · Esc done")));
 		}
 		card
 	}
@@ -1693,10 +1840,22 @@ impl App {
 						placed.push((diff.anchor(line.into(), line.into(), left), None));
 					}
 					placed.sort_by_key(|(at, t)| (*at, t.is_some(), t.and_then(|t| t.line())));
+					// Where a jump to each change scrolls to: the view is cut there, so those places have keys.
+					let cuts: Vec<usize> = diff.changes().into_iter().map(|c| diff.jump_to(c, JUMP_LEAD)).collect();
+					let segs = |body: &mut Vec<tern_sdk::Node<Msg>>, from: usize, to: usize| {
+						let mut a = from;
+						for &c in cuts.iter().filter(|&&c| c > from && c < to) {
+							if c > a {
+								body.push(segment(diff, a, c, p.split, lang));
+								a = c;
+							}
+						}
+						body.push(segment(diff, a, to, p.split, lang));
+					};
 					let mut from = 0;
 					for (at, t) in placed {
 						if at > from {
-							body.push(segment(diff, from, at, p.split, lang));
+							segs(&mut body, from, at);
 							from = at;
 						}
 						body.push(match (t, open) {
@@ -1706,7 +1865,7 @@ impl App {
 						});
 					}
 					if from < diff.len() {
-						body.push(segment(diff, from, diff.len(), p.split, lang));
+						segs(&mut body, from, diff.len());
 					}
 				}
 			},
@@ -1715,6 +1874,7 @@ impl App {
 		head = head
 			.child(html::div().class("aztog right").child(tog(!p.split, "Inline", Msg::Split(false))).child(tog(p.split, "Side by side", Msg::Split(true))))
 			.child(html::div().class("aztog").child(tog(!p.full, "Changes", Msg::Full(false))).child(tog(p.full, "Whole file", Msg::Full(true))));
+		head = head.child(html::div().class("aztog").child(tog(false, "\u{25b2}", Msg::Change(false))).child(tog(false, "\u{25bc} change", Msg::Change(true))));
 		html::div().key("dp").class("azdp").child(head).child(html::div().key("ds").class("azds").children(body))
 	}
 
@@ -1808,6 +1968,72 @@ impl App {
 		}
 	}
 
+	/// Scroll the diff to change `n` of the selected file, with a few lines of the file above it.
+	fn reveal_change(&mut self, n: usize) {
+		let Some(p) = &mut self.page else { return };
+		let Some(diff) = p.diff() else { return };
+		let Some(start) = diff.changes().get(n).copied() else { return };
+		let at = diff.jump_to(start, JUMP_LEAD);
+		p.change = Some(n);
+		p.thread = None;
+		self.scroll_req = Some(ScrollReq::Reveal(format!("{FILES_DS}.s{at}")));
+	}
+
+	/// Carry out a jump that waited for the file: to its first change or its last.
+	fn finish_go(&mut self) {
+		let Some(p) = &mut self.page else { return };
+		let Some(first) = p.go.take() else { return };
+		let count = p.diff().map_or(0, |d| d.changes().len());
+		if count == 0 {
+			self.change_file(first);
+		} else {
+			self.reveal_change(if first { 0 } else { count - 1 });
+		}
+	}
+
+	/// Vim's `]c` and `[c`: the next (or previous) change in the diff, going on to the next (or previous) file at the end.
+	fn step_change(&mut self, forward: bool) {
+		let Some(p) = &self.page else { return };
+		if p.tab != PrTab::Files {
+			self.note = "changes are in the Files tab".into();
+			return;
+		}
+		if !p.file_ready() {
+			self.note = "the file is still loading".into();
+			return;
+		}
+		let count = p.diff().map_or(0, |d| d.changes().len());
+		let next = match (p.change, forward) {
+			(None, true) => Some(0),
+			(None, false) => count.checked_sub(1),
+			(Some(c), true) => Some(c + 1),
+			(Some(c), false) => c.checked_sub(1),
+		}
+		.filter(|n| *n < count);
+		match next {
+			Some(n) => self.reveal_change(n),
+			None => self.change_file(forward),
+		}
+	}
+
+	/// The first change of the next file (the last of the previous one going back), in the file tree's order.
+	fn change_file(&mut self, forward: bool) {
+		let Some(p) = &self.page else { return };
+		let order = tree::order(&p.paths());
+		let Some(at) = order.iter().position(|i| *i == p.file) else { return };
+		let next = if forward { at + 1 } else { at.wrapping_sub(1) };
+		let Some(&file) = order.get(next) else {
+			self.note = if forward { "last change" } else { "first change" }.into();
+			return;
+		};
+		self.pick_file(file);
+		let Some(p) = &mut self.page else { return };
+		p.go = Some(forward);
+		if p.file_ready() {
+			self.finish_go();
+		}
+	}
+
 	/// The next (or previous) file in the tree, skipping folded folders.
 	fn step_file(&mut self, forward: bool) {
 		let Some(p) = &self.page else { return };
@@ -1868,6 +2094,8 @@ impl App {
 		p.file = i.min(n - 1);
 		p.thread = None;
 		p.pending = None;
+		p.change = None;
+		p.go = None;
 		// Unfold the folders it is in, so its row can be shown.
 		for f in tree::parents(&p.paths(), p.file) {
 			p.folded.remove(&f);
@@ -1884,12 +2112,167 @@ impl App {
 		};
 	}
 
+	/// The open PR's repo key and its review settings: what is saved, else the defaults.
+	fn review_settings(&self) -> Option<(String, config::Review)> {
+		let repo = &self.page.as_ref()?.pr.repository;
+		let key = config::repo_key(&repo.project.name, &repo.name);
+		let mut r = config::review(&key).unwrap_or_default();
+		if r.agent.trim().is_empty() {
+			r.agent = review::DEFAULT_AGENT.into();
+		}
+		Some((key, r))
+	}
+
+	/// What a prompt can use: the open PR, and for the comment prompts one thread (the given one, else the selected one,
+	/// else the first).
+	fn review_vars(&self, thread: Option<u32>) -> Option<review::Vars> {
+		let p = self.page.as_ref()?;
+		let pr = &p.pr;
+		let none = |s: String, empty: &str| if s.trim().is_empty() { empty.to_owned() } else { s };
+		let at = |t: &Thread| match (t.file(), t.line()) {
+			(Some(f), Some(l)) => format!("{}:{l}", f.trim_start_matches('/')),
+			(Some(f), None) => f.trim_start_matches('/').to_owned(),
+			_ => "the pull request".to_owned(),
+		};
+		let mut v = review::Vars {
+			id: pr.pull_request_id.to_string(),
+			title: pr.title.clone(),
+			url: self.client.as_ref().map(|c| c.web_url(pr)).unwrap_or_default(),
+			project: pr.repository.project.name.clone(),
+			repo: pr.repository.name.clone(),
+			source: pr.source().to_owned(),
+			target: pr.target().to_owned(),
+			author: pr.created_by.display_name.clone(),
+			description: none(pr.description.clone().unwrap_or_default(), "(none)"),
+			..review::Vars::default()
+		};
+		if let Some(d) = &p.detail {
+			let files: Vec<String> = d.changes.iter().take(300).map(|c| format!("{} {}", c.letter(), c.path().trim_start_matches('/'))).collect();
+			v.files = files.join("\n");
+			let comments: Vec<String> = d
+				.threads
+				.iter()
+				.filter(|t| t.shown())
+				.map(|t| {
+					let (status, _) = api::status_label(t.status.as_deref());
+					let first = t.human().next();
+					let who = first.map_or("", |c| c.author.display_name.as_str());
+					let text = first_line(first.and_then(|c| c.content.as_deref()).unwrap_or_default(), 300);
+					let more = t.human().count() - 1;
+					format!("- [{status}] {}: {who}: {text}{}", at(t), if more > 0 { format!(" (+{more} replies)") } else { String::new() })
+				})
+				.collect();
+			v.comments = comments.join("\n");
+			let t = thread
+				.or(p.thread)
+				.and_then(|id| d.threads.iter().find(|t| t.id == id && t.shown()))
+				.or_else(|| d.threads.iter().find(|t| t.shown()));
+			if let Some(t) = t {
+				let say = |c: &api::Comment| format!("{}: {}", c.author.display_name, c.content.as_deref().unwrap_or_default().trim());
+				v.thread = t.human().map(say).collect::<Vec<_>>().join("\n\n");
+				v.file = t.file().map_or_else(|| "the pull request".to_owned(), |f| f.trim_start_matches('/').to_owned());
+				v.line = t.line().map_or_else(|| "n/a".to_owned(), |l| l.to_string());
+				v.comment = t.human().last().and_then(|c| c.content.clone()).unwrap_or_default();
+			}
+		}
+		v.files = none(v.files, "(still loading)");
+		v.comments = none(v.comments, "(none)");
+		v.thread = none(v.thread, "(no comment)");
+		v.file = none(v.file, "n/a");
+		v.line = none(v.line, "n/a");
+		Some(v)
+	}
+
+	/// Walk through this repo's checkout and agent; then run `next`, if any.
+	fn review_setup(&mut self, next: Option<(review::Kind, Option<u32>)>) {
+		let Some((key, mut r)) = self.review_settings() else { return };
+		let repo = self.page.as_ref().map(|p| p.pr.repository.name.clone()).unwrap_or_default();
+		if r.dir.trim().is_empty() {
+			r.dir = review::guess_dir(&repo).unwrap_or_default();
+		}
+		self.note = format!("AI settings for {repo}");
+		self.rv_menu = false;
+		self.compose = Some(Composer::new(ComposeKind::ReviewDir, r.dir.clone()));
+		self.review = r;
+		self.review_key = key;
+		self.review_next = next;
+	}
+
+	/// Edit one kind of prompt for this repo, starting from what is saved or the default.
+	fn edit_prompt(&mut self, kind: review::Kind) {
+		let Some((key, r)) = self.review_settings() else { return };
+		let text = r.prompts.get(kind.id()).filter(|t| !t.trim().is_empty()).cloned().unwrap_or_else(|| kind.default_prompt().to_owned());
+		self.rv_menu = false;
+		self.note = "variables fill in when it runs: Ctrl+P shows the result".into();
+		self.compose = Some(Composer::new(ComposeKind::ReviewPrompt(kind), text));
+		self.review = r;
+		self.review_key = key;
+	}
+
+	/// Start the agent on the PR (or a comment thread) in a new block, in this repo's checkout.
+	fn run_ai(&mut self, kind: review::Kind, thread: Option<u32>) {
+		self.rv_menu = false;
+		let Some((_, r)) = self.review_settings() else { return };
+		if matches!(kind, review::Kind::Explain | review::Kind::Respond) && self.review_vars(thread).is_some_and(|v| v.thread == "(no comment)") {
+			self.note = "this pull request has no comments yet".into();
+			return;
+		}
+		if !std::path::Path::new(r.dir.trim()).is_dir() {
+			self.review_setup(Some((kind, thread)));
+			return;
+		}
+		let Some(vars) = self.review_vars(thread) else { return };
+		let template = r.prompts.get(kind.id()).filter(|t| !t.trim().is_empty()).map_or(kind.default_prompt(), String::as_str);
+		let prompt = review::render(template, &vars);
+		self.note = match review::launch(r.dir.trim(), &review::argv(&r.agent, &prompt)) {
+			Ok(m) => m,
+			Err(e) => format!("AI request failed: {e}"),
+		};
+	}
+
+	/// The prompt being edited with its variables filled in.
+	fn prompt_preview(&self, draft: &str) -> String {
+		self.review_vars(None).map(|v| review::render(draft, &v)).unwrap_or_default()
+	}
+
 	fn send(&mut self, text: String) {
 		let Some(c) = self.compose.take() else { return };
 		match c.kind {
+			ComposeKind::ReviewDir => {
+				let dir = text.trim().trim_matches('"').to_owned();
+				if !std::path::Path::new(&dir).is_dir() {
+					self.note = format!("{dir} is not a folder");
+					self.compose = Some(Composer::new(ComposeKind::ReviewDir, text));
+					return;
+				}
+				self.review.dir = dir;
+				self.compose = Some(Composer::new(ComposeKind::ReviewAgent, self.review.agent.clone()));
+			},
+			ComposeKind::ReviewAgent => {
+				self.review.agent = if text.trim().is_empty() { review::DEFAULT_AGENT.into() } else { text.trim().to_owned() };
+				match config::save_review(&self.review_key, self.review.clone()) {
+					Ok(()) => match self.review_next.take() {
+						Some((kind, thread)) => self.run_ai(kind, thread),
+						None => self.note = "saved the AI settings".into(),
+					},
+					Err(e) => self.note = format!("could not save the AI settings: {e}"),
+				}
+			},
+			ComposeKind::ReviewPrompt(kind) => {
+				// The default is not saved, so a better default reaches everyone who never changed it.
+				if text.trim().is_empty() || text.trim() == kind.default_prompt() {
+					self.review.prompts.remove(kind.id());
+				} else {
+					self.review.prompts.insert(kind.id().to_owned(), text.trim_end().to_owned());
+				}
+				self.note = match config::save_review(&self.review_key, self.review.clone()) {
+					Ok(()) => format!("saved the {} prompt", kind.label()),
+					Err(e) => format!("could not save the prompt: {e}"),
+				};
+			},
 			ComposeKind::Org => match config::normalize(&text) {
 				Some(org) => {
-					if let Err(e) = config::save(&config::Config { org: org.clone() }) {
+					if let Err(e) = config::save_org(&org) {
 						self.note = format!("could not save the config: {e}");
 					}
 					self.connect(&org);
@@ -1995,8 +2378,12 @@ impl App {
 			}
 			return true;
 		}
+		if matches!(kind, ComposeKind::ReviewPrompt(_)) && key.ctrl && key.name == "p" {
+			self.preview = !self.preview;
+			return true;
+		}
 		let Some(c) = &mut self.compose else { return false };
-		let multiline = matches!(kind, ComposeKind::Comment(_) | ComposeKind::Inline { .. });
+		let multiline = matches!(kind, ComposeKind::Comment(_) | ComposeKind::Inline { .. } | ComposeKind::ReviewPrompt(_));
 		if key.name == "enter" {
 			if multiline && (key.shift || key.alt) {
 				c.insert("\n");
@@ -2016,8 +2403,9 @@ impl App {
 
 	/// A key with nothing else taking it. False to quit.
 	fn key(&mut self, key: &Key) -> bool {
-		if self.menu.is_some() && key.is("escape") {
+		if (self.menu.is_some() || self.rv_menu) && key.is("escape") {
 			self.menu = None;
+			self.rv_menu = false;
 			return true;
 		}
 		if self.voting {
@@ -2178,6 +2566,11 @@ impl App {
 					self.fix_selection();
 				}
 			},
+			// Vim's next/previous change; Shift+] and Shift+[ may arrive as the unshifted key.
+			"}" => self.step_change(true),
+			"{" => self.step_change(false),
+			"]" if key.shift => self.step_change(true),
+			"[" if key.shift => self.step_change(false),
 			"]" => self.step_pr(true),
 			"[" => self.step_pr(false),
 			"tab" | "1" | "2" => {
@@ -2210,6 +2603,14 @@ impl App {
 				self.rebuild_diffs();
 			},
 			"v" => self.voting = true,
+			"I" => self.rv_menu = !self.rv_menu,
+			"i" if key.shift => self.rv_menu = !self.rv_menu,
+			"i" => self.run_ai(review::Kind::Review, None),
+			"t" => self.run_ai(review::Kind::Context, None),
+			"e" | "w" => match p.thread {
+				Some(t) => self.run_ai(if key.name == "e" { review::Kind::Explain } else { review::Kind::Respond }, Some(t)),
+				None => self.note = "pick a comment first (n / p, or click one)".into(),
+			},
 			"c" if files => {
 				if p.file_ready() {
 					self.compose = Some(Composer::new(ComposeKind::Line, String::new()));
@@ -2298,6 +2699,12 @@ impl App {
 				}
 			},
 			Msg::Cancel => self.compose = None,
+			Msg::Change(forward) => self.step_change(forward),
+			Msg::Ai(kind, thread) => self.run_ai(kind, thread),
+			Msg::ReviewMenu => self.rv_menu = !self.rv_menu,
+			Msg::EditPrompt(kind) => self.edit_prompt(kind),
+			Msg::ReviewSetup => self.review_setup(None),
+			Msg::Preview => self.preview = !self.preview,
 			Msg::Submit => {
 				if let Some(text) = self.compose.as_ref().map(|c| c.draft.clone()) {
 					self.send(text);

@@ -108,6 +108,22 @@ impl FileDiff {
 		self.lines.iter().filter(|l| l.tag == '-').count()
 	}
 
+	/// Where each block of changed lines starts (the first line of every run of added or removed lines).
+	pub fn changes(&self) -> Vec<usize> {
+		(0..self.lines.len()).filter(|&i| self.lines[i].tag != ' ' && (i == 0 || self.lines[i - 1].tag == ' ')).collect()
+	}
+
+	/// Where the view starts when it jumps to the change at line `start`: `lead` lines above it, unless that would cut
+	/// through another block of changes.
+	pub fn jump_to(&self, start: usize, lead: usize) -> usize {
+		let t = start.saturating_sub(lead);
+		let safe = t == 0
+			|| self.lines[t].tag == ' '
+			|| self.lines[t - 1].tag == ' '
+			|| (self.lines[t - 1].tag == '+' && self.lines[t].tag == '-');
+		if safe { t } else { start }
+	}
+
 	/// Where a hunk that starts at line `i` begins on each side.
 	fn starts(&self, i: usize) -> (u64, u64) {
 		let hunk = self.lines[i].hunk;
@@ -176,6 +192,19 @@ mod tests {
 		let part = d.window(2, 2);
 		assert_eq!(part[0].lines, vec!["+D", " e"]);
 		assert_eq!((part[0].old_start, part[0].new_start), (Some(5), Some(4)));
+	}
+
+	#[test]
+	fn changes_start_each_block_and_jumps_keep_a_lead() {
+		let old = (1..=20).map(|n| format!("l{n}\n")).collect::<String>();
+		let new = old.replace("l10\n", "X\n").replace("l12\n", "Y\n").replace("l18\n", "Z\n");
+		let d = build(&old, &new, usize::MAX / 4);
+		let starts = d.changes();
+		// l10 -> X is one block; l12 -> Y another (l11 between); l18 -> Z a third.
+		assert_eq!(starts, [9, 12, 19]);
+		assert_eq!(d.jump_to(9, 5), 4);
+		assert_eq!(d.jump_to(12, 5), 7);
+		assert_eq!(d.jump_to(2, 5), 0);
 	}
 
 	#[test]

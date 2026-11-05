@@ -10,6 +10,7 @@ mod clip;
 mod config;
 mod demo;
 mod diff;
+mod review;
 mod tree;
 mod worker;
 
@@ -70,7 +71,7 @@ fn main() -> anyhow::Result<()> {
 		},
 		["org", value] => {
 			let org = config::normalize(value).context("that does not look like an Azure DevOps organization")?;
-			config::save(&config::Config { org: org.clone() })?;
+			config::save_org(&org)?;
 			println!("{org}");
 			Ok(())
 		},
