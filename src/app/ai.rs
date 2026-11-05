@@ -348,6 +348,16 @@ impl App {
 		}
 	}
 
+	/// Copy the prompt as shown, for an agent that is already running.
+	pub(super) fn ai_copy(&mut self) {
+		let Some(m) = &self.ai else { return };
+		let (thread, line) = m.req.as_ref().map_or((None, None), |r| (r.thread, r.line.clone()));
+		let Some(vars) = self.review_vars(thread, line.as_ref()) else { return };
+		let prompt = review::render(&m.template(), &vars);
+		self.copy(&prompt, "the prompt");
+		self.ai = None;
+	}
+
 	/// Start the agent with the prompt as shown.
 	pub(super) fn ai_start(&mut self) {
 		let Some(m) = &self.ai else { return };
@@ -381,6 +391,7 @@ impl App {
 			None,
 			Close,
 			Start,
+			Copy,
 			Enter(Section),
 			Save(String),
 			Use(PathBuf),
@@ -412,6 +423,7 @@ impl App {
 				Section::Preview => match key.name.as_str() {
 					"escape" | "q" => Act::Close,
 					"enter" => Act::Start,
+					"c" => Act::Copy,
 					"e" | "t" => Act::Enter(Section::Template),
 					"f" => Act::Enter(Section::Folder),
 					"a" => Act::Enter(Section::Agent),
@@ -423,6 +435,7 @@ impl App {
 			Act::None => {},
 			Act::Close => self.ai = None,
 			Act::Start => self.ai_start(),
+			Act::Copy => self.ai_copy(),
 			Act::Enter(s) => self.ai_section(s),
 			Act::Save(t) => self.ai_save(t),
 			Act::Use(p) => self.ai_use_dir(&p),
@@ -487,8 +500,8 @@ impl App {
 			Section::Preview => {
 				body = body.child(html::div().class("apt").child(html::span(if m.req.is_some() { "The agent will be told:" } else { "A prompt, filled in for this pull request:" })));
 				body = body.child(html::div().class("pvx big").child(html::span(preview)));
-				foot = foot.child(html::span("Enter starts \u{b7} E edits the template \u{b7} F folder \u{b7} A agent \u{b7} Esc closes").class("dim")).child(btn("Cancel", false, Msg::AiClose));
-				foot = if m.req.is_some() { foot.child(btn("Start agent", true, Msg::AiStart)) } else { foot.child(btn("Done", true, Msg::AiClose)) };
+				foot = foot.child(html::span("Enter starts \u{b7} C copies the prompt \u{b7} E template \u{b7} F folder \u{b7} A agent \u{b7} Esc closes").class("dim")).child(btn("Cancel", false, Msg::AiClose));
+				foot = if m.req.is_some() { foot.child(btn("Copy prompt", false, Msg::AiCopy)).child(btn("Start agent", true, Msg::AiStart)) } else { foot.child(btn("Done", true, Msg::AiClose)) };
 			},
 			Section::Template => {
 				body = body.child(html::div().class("apt").child(html::span(format!("The {} template for {repo}", m.kind.label()))));

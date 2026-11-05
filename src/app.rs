@@ -18,6 +18,7 @@ use tern_sdk::{
 };
 
 mod ai;
+mod nav;
 
 use crate::{
 	review,
@@ -38,8 +39,6 @@ const CONTEXT: usize = 3;
 const JUMP_LEAD: usize = 5;
 /// The pane width (in columns) from which the navigation rail shows; below it `/` jumps between PRs.
 const RAIL_MIN_COLS: f64 = 110.0;
-/// Results the switcher shows at once.
-const JUMP_ROWS: usize = 8;
 const COMPOSER: &str = "dock.ed";
 /// The comment box that opens under a diff line.
 const LINE_BOX: &str = "main.pbody.fv.dp.ds.cbox";
@@ -84,6 +83,11 @@ const CSS: &str = "\
 .ptabs{display:flex;gap:4px;margin:2px 4px 0;border-bottom:1px solid color-mix(in srgb,var(--sf-c-muted) 28%,transparent);flex-shrink:0}\
 .ptab{padding:6px 12px;cursor:pointer;color:var(--sf-c-muted);border-bottom:2px solid transparent}\
 .azcbf>.azbtn.ai+.azbtn.ai{margin-right:auto}\
+.nbar{padding-bottom:6px}.rpr.pk,.row.ph.pk{outline:2px solid var(--sf-c-accent);outline-offset:-2px}.row.ph{cursor:pointer}\
+.navpick{position:absolute;top:8px;left:8px;right:8px;bottom:8px;z-index:55;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:12px;background:var(--sf-c-bg,#1e1e22);border:1px solid var(--sf-c-accent);box-shadow:0 12px 40px rgba(0,0,0,.6);font-family:Geist,system-ui,sans-serif}\
+.navpick.wide{left:calc(50% - 380px);right:auto;width:760px;max-width:calc(100% - 16px)}\
+.navpick .nph{display:flex;align-items:center;gap:10px}.navpick .aps{flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--sf-c-accent);font-family:ui-monospace,Consolas,monospace;font-size:14px}\
+.navpick .npl{flex:1;min-height:0;overflow-y:auto}.navpick .apf{display:flex;font-size:12px}.navpick .aix{cursor:pointer;color:var(--sf-c-muted);padding:2px 8px;font-size:15px}\
 .busy{opacity:.75;cursor:default;color:var(--sf-c-accent)}\
 .aimodal{position:absolute;top:8px;left:8px;right:8px;bottom:8px;z-index:60;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;padding:16px 20px;border-radius:12px;background:var(--sf-c-bg,#1e1e22);border:1px solid var(--sf-c-accent);box-shadow:0 12px 40px rgba(0,0,0,.6);font-family:Geist,system-ui,sans-serif}\
 .aimodal .aih{display:flex;align-items:flex-start;gap:12px}.aimodal .ait{flex:1;display:flex;flex-direction:column;gap:2px;font-size:17px;font-weight:650}.aimodal .ait .dim{font-size:12.5px;font-weight:400}\
@@ -258,6 +262,18 @@ enum Msg {
 	ReviewAgent,
 	/// The comment box on a diff line: ask an AI about that line.
 	AiLine(review::Kind),
+	/// The picker for moving between PRs: open it.
+	NavOpen,
+	/// The picker: close it.
+	NavClose,
+	/// A project in the rail or the picker: fold or unfold it.
+	Fold(String),
+	/// Hide or show the rail.
+	RailToggle,
+	/// The previous (false) or next (true) PR in this project.
+	StepPr(bool),
+	/// The AI modal: copy the prompt instead of starting an agent.
+	AiCopy,
 	/// The AI modal: show a section.
 	AiSection(ai::Section),
 	/// The AI modal: keep the template or agent being edited.
@@ -417,8 +433,6 @@ enum ComposeKind {
 	Filter,
 	/// A new thread when none, else a reply in that thread.
 	Comment(Option<u32>),
-	/// The quick switcher: type to pick any pull request.
-	Jump,
 	/// Which agent to run.
 	ReviewAgent,
 	/// Edit one kind of prompt.
@@ -670,8 +684,12 @@ struct App {
 	menu:    Option<Menu>,
 	status:  StatusFilter,
 	sort:    SortMode,
-	/// The highlighted result in the switcher.
-	jump:    usize,
+	/// The picker for moving between PRs, when open.
+	nav: Option<nav::Nav>,
+	/// Projects folded in the rail and the picker.
+	folded: HashSet<String>,
+	/// The rail is hidden, on a pane wide enough to show it.
+	rail_hidden: bool,
 	/// The AI modal, when open.
 	ai: Option<ai::AiModal>,
 	/// When each AI button last started an agent, so it can say it is running.
@@ -685,6 +703,8 @@ struct App {
 	rows:    f64,
 	cell_h:  f64,
 	cols:    f64,
+	/// `TERN_AZDO_COLS` set the width: it is not read from the pane again.
+	cols_fixed: bool,
 	tx:      Sender<Reply>,
 	rx:      Receiver<Reply>,
 	busy:    usize,
@@ -920,8 +940,8 @@ fn open_url(url: &str) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// The pane's height in lines, from `tern inspect` (the surface is not told when it changes).
-fn pane_rows() -> Option<f64> {
+/// The pane's width in columns and height in lines, from `tern inspect` (the surface is told neither when it starts).
+fn pane_size() -> Option<(f64, f64)> {
 	let id: u64 = std::env::var("TERN_PANE").ok()?.parse().ok()?;
 	let out = std::process::Command::new("tern").args(["inspect", "--json"]).output().ok()?;
 	let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
@@ -930,9 +950,9 @@ fn pane_rows() -> Option<f64> {
 		match n {
 			serde_json::Value::Object(m) => {
 				if m.get("id").and_then(serde_json::Value::as_u64) == Some(id)
-					&& let Some(r) = m.get("rows").and_then(serde_json::Value::as_f64)
+					&& let (Some(c), Some(r)) = (m.get("cols").and_then(serde_json::Value::as_f64), m.get("rows").and_then(serde_json::Value::as_f64))
 				{
-					return Some(r);
+					return Some((c, r));
 				}
 				stack.extend(m.values());
 			},
@@ -946,6 +966,8 @@ fn pane_rows() -> Option<f64> {
 impl App {
 	fn new(org: Option<String>, demo: bool) -> Self {
 		let (tx, rx) = mpsc::channel();
+		let size = pane_size();
+		let forced = std::env::var("TERN_AZDO_COLS").ok().and_then(|v| v.parse::<f64>().ok());
 		let mut app = Self {
 			client: None,
 			me: None,
@@ -959,7 +981,9 @@ impl App {
 			menu: None,
 			status: StatusFilter::Any,
 			sort: SortMode::Project,
-			jump: 0,
+			nav: None,
+			folded: HashSet::new(),
+			rail_hidden: false,
 			ai: None,
 			ai_run: HashMap::new(),
 			rv_menu: false,
@@ -967,9 +991,10 @@ impl App {
 			compose: None,
 			voting: false,
 			note: String::new(),
-			rows: pane_rows().unwrap_or(40.0),
+			rows: size.map_or(40.0, |s| s.1),
 			cell_h: 20.0,
-			cols: 160.0,
+			cols: forced.or(size.map(|s| s.0)).unwrap_or(160.0),
+			cols_fixed: forced.is_some(),
 			tx,
 			rx,
 			busy: 0,
@@ -1103,31 +1128,10 @@ impl App {
 		}
 	}
 
-	/// Every active PR matching each word of `q`, by project, repo, then newest first.
-	fn jump_results(&self, q: &str) -> Vec<u32> {
-		let words: Vec<String> = q.to_lowercase().split_whitespace().map(|w| w.trim_start_matches('!').to_owned()).collect();
-		let mut v: Vec<&Pr> = self
-			.prs
-			.iter()
-			.filter(|p| {
-				let hay = format!("{} {} {} {} {} {}", p.pull_request_id, p.title, p.created_by.display_name, p.repository.name, p.repository.project.name, p.source()).to_lowercase();
-				words.iter().all(|w| hay.contains(w.as_str()))
-			})
-			.collect();
-		v.sort_by(|a, b| {
-			(a.repository.project.name.to_lowercase(), a.repository.name.to_lowercase())
-				.cmp(&(b.repository.project.name.to_lowercase(), b.repository.name.to_lowercase()))
-				.then(b.pull_request_id.cmp(&a.pull_request_id))
-		});
-		v.iter().map(|p| p.pull_request_id).collect()
-	}
-
 	fn open(&mut self, id: u32) {
 		let Some(pr) = self.prs.iter().find(|p| p.pull_request_id == id).cloned() else { return };
 		self.menu = None;
-		if self.compose.as_ref().is_some_and(|c| c.kind == ComposeKind::Jump) {
-			self.compose = None;
-		}
+		self.nav = None;
 		self.sel = Some(id);
 		self.page = Some(Page::new(pr.clone()));
 		self.start(Job::Detail(pr));
@@ -1202,11 +1206,11 @@ impl App {
 						self.tab = if self.prs.iter().any(|p| self.in_tab(p, ListTab::Mine)) { ListTab::Mine } else { ListTab::All };
 					}
 					self.fix_selection();
-					if self.page.is_none()
-						&& self.cols >= RAIL_MIN_COLS
-						&& let Some(id) = self.sel
-					{
-						self.open(id);
+					if self.page.is_none() && self.nav.is_none() {
+						match self.sel {
+							Some(id) if self.rail_shown() => self.open(id),
+							_ => self.open_nav(),
+						}
 					}
 				},
 				Reply::Loaded(Err(e)) => {
@@ -1279,10 +1283,7 @@ impl App {
 	/// Lines for the main region (the dock takes the rest).
 	fn avail(&self) -> f64 {
 		let in_dock = self.compose.as_ref().is_some_and(|c| !matches!(c.kind, ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent));
-		let mut dock = 2.0 + if in_dock || self.voting { 2.2 } else { 0.0 };
-		if let Some(c) = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Jump) {
-			dock += 1.45 * self.jump_results(&c.draft).len().clamp(1, JUMP_ROWS) as f64 + 0.8;
-		}
+		let dock = 2.0 + if in_dock || self.voting { 2.2 } else { 0.0 };
 		(self.rows - dock - 0.5).max(6.0)
 	}
 
@@ -1324,35 +1325,12 @@ impl App {
 			}
 			dock.push(row.child(html::span("Esc cancels").class("dim")).into());
 		}
-		if let Some(c) = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Jump) {
-			let ids = self.jump_results(&c.draft);
-			let at = self.jump.min(ids.len().saturating_sub(1));
-			let first = at.saturating_sub(JUMP_ROWS - 1).min(ids.len().saturating_sub(JUMP_ROWS));
-			let mut list = html::div().class("jump");
-			for id in ids.iter().skip(first).take(JUMP_ROWS) {
-				let Some(p) = self.prs.iter().find(|p| p.pull_request_id == *id) else { continue };
-				let cur = ids.get(at) == Some(id);
-				list = list.child(
-					html::div()
-						.class(if cur { "row cur" } else { "row" })
-						.on_click(Msg::Open(*id))
-						.child(html::span(format!("!{id}")).class("id"))
-						.child(html::span(p.title.clone()).class("t"))
-						.child(html::span(format!("{} \u{b7} {}", p.repository.project.name, short_name(&p.created_by.display_name))).class("pj")),
-				);
-			}
-			if ids.is_empty() {
-				list = list.child(html::div().class("row").child(html::span("No pull request matches.").class("dim")));
-			}
-			dock.push(list.into());
-		}
 		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. } | ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent)) {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
 				ComposeKind::ReviewAgent => "Agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
 				ComposeKind::ReviewPrompt(k) => format!("The {} prompt for this repo (Enter saves, Shift+Enter new line, Ctrl+P preview, Esc cancels)", k.label()),
-				ComposeKind::Jump => "Jump to a PR: type part of its title, author, repo or id (Up/Down choose, Enter opens, Esc cancels)".into(),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
 				ComposeKind::Comment(None) => "New comment on the pull request (Enter sends, Shift+Enter new line, Esc cancels)".into(),
 				ComposeKind::Comment(Some(_)) => "Reply (Enter sends, Shift+Enter new line, Esc cancels)".into(),
@@ -1397,25 +1375,32 @@ impl App {
 		}
 		let files = self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files);
 		// Longest hint that fits beside the org and user segments; the shortest tiers keep the essentials.
-		let tiers: [&str; 4] = if files {
+		let tiers: [&str; 4] = if self.nav.is_some() {
 			[
-				"Esc back · / jump to PR · [ ] prev/next PR · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · { } change · s split · x whole file · n next comment · c comment on a line · a reply · i AI review",
-				"Esc back · / jump · [ ] PR · Tab overview · j/k file · { } change · s split · x whole · n next · c comment · a reply · i AI",
-				"Esc back · / jump · Tab · j/k · s split · n next · c · a",
+				"type to search \u{b7} \u{2191}\u{2193} cycle \u{b7} \u{2190}\u{2192} fold a project \u{b7} Enter open \u{b7} Esc close",
+				"type to search \u{b7} \u{2191}\u{2193} cycle \u{b7} \u{2190}\u{2192} fold \u{b7} Enter open \u{b7} Esc close",
+				"type \u{b7} \u{2191}\u{2193} \u{b7} \u{2190}\u{2192} fold \u{b7} Enter \u{b7} Esc",
+				"Enter \u{b7} Esc",
+			]
+		} else if files {
+			[
+				"Esc back · ^K find PR · [ ] prev/next PR · Tab overview · j/k file · h/l fold · ^d/^u gg/G scroll · { } change · s split · x whole file · n next comment · c comment on a line · a reply · i AI review",
+				"Esc back · ^K PRs · [ ] PR · Tab overview · j/k file · { } change · s split · x whole · n next · c comment · a reply · i AI",
+				"Esc back · ^K PRs · Tab · j/k · s split · n next · c · a",
 				"Esc back · Tab · j/k",
 			]
 		} else if self.page.is_some() {
 			[
-				"Esc back · / jump to PR · [ ] prev/next PR · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · i AI review · t context · e explain · w reply · o browser · r refresh",
-				"Esc back · / jump · [ ] PR · Tab files · j/k scroll · n next · a reply · c comment · v vote · i AI · o browser",
-				"Esc back · / jump · Tab · j/k · n next · a · c · v · o",
+				"Esc back · ^K find PR · [ ] prev/next PR · Tab files · j/k ^d/^u gg/G scroll · n next comment · a reply · c comment · v vote · i AI review · t context · e explain · w reply · o browser · r refresh",
+				"Esc back · ^K PRs · [ ] PR · Tab files · j/k scroll · n next · a reply · c comment · v vote · i AI · o browser",
+				"Esc back · ^K PRs · Tab · j/k · n next · a · c · v · o",
 				"Esc back · Tab · j/k",
 			]
 		} else {
 			[
-				"Enter open · / jump · j/k gg/G · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit",
-				"Enter open · / jump · j/k · 1-3 tabs · f filter · o browser · y link · r refresh",
-				"Enter open · / jump · j/k · 1-3 · f filter · o · r",
+				"Enter open · ^K PRs · j/k gg/G · 1-3 tabs · f filter · o browser · y copy link · r refresh · q quit",
+				"Enter open · ^K PRs · j/k · 1-3 tabs · f filter · o browser · y link · r refresh",
+				"Enter open · ^K PRs · j/k · 1-3 · f filter · o · r",
 				"Enter · j/k · f · q",
 			]
 		};
@@ -1469,78 +1454,29 @@ impl App {
 		let sort_items: Vec<_> = SortMode::ALL.iter().map(|m| (m.label().to_owned(), None, *m == self.sort, Msg::Sort(m.id().to_owned()))).collect();
 		html::div()
 			.class("topbar")
+			.child(html::div().class("ddb").title("Hide the sidebar").on_click(Msg::RailToggle).child(html::span("\u{25e7}")))
 			.child(dd(Menu::Show, "Show", format!("{} ({tab_n})", self.tab.label()), show_items))
 			.child(dd(Menu::Project, "Project", self.project.clone().unwrap_or_else(|| "All projects".to_owned()), project_items))
 			.child(dd(Menu::Status, "Status", self.status.label().to_owned(), status_items))
 			.child(dd(Menu::Sort, "Sort", self.sort.label().to_owned(), sort_items))
 	}
 
-	/// The navigation rail: the PRs the filters leave, grouped by project, each as a card with the whole title, author,
-	/// age and votes.
-	fn rail(&self) -> html::El<Msg> {
-		let mut rail = html::div().class("rail");
-		let cur = self.page.as_ref().map(|p| p.pr.pull_request_id).or(self.sel);
-		let visible = self.visible();
-		if visible.is_empty() {
-			let msg = if self.loading && self.prs.is_empty() { "Loading pull requests\u{2026}" } else { "No pull requests match these filters." };
-			return rail.child(html::div().class("row rl").child(html::span(msg)));
-		}
-		let me = self.me_id();
-		let mut last = "";
-		for q in &visible {
-			let name = q.repository.project.name.as_str();
-			if self.sort == SortMode::Project && name != last {
-				last = name;
-				let n = visible.iter().filter(|p| p.repository.project.name == name).count();
-				rail = rail.child(html::div().class("row ph").child(html::span(name.to_owned()).class("nm")).child(html::span(n.to_string()).class("n")));
-			}
-			let id = q.pull_request_id;
-			let mut meta = html::div().class("rm").child(html::span(format!("!{id}")));
-			if q.is_draft {
-				meta = meta.child(html::span("draft").class("chip"));
-			}
-			meta = meta.child(html::span(short_name(&q.created_by.display_name))).child(html::span(age(&q.creation_date)));
-			let counts = api::vote_counts(q);
-			for (vote, class, glyph) in [(10, "ok", "\u{2713}"), (5, "ok", "\u{2713}~"), (-5, "wait", "\u{23f8}"), (-10, "bad", "\u{2717}")] {
-				if let Some(n) = counts.get(&vote) {
-					meta = meta.child(html::span(format!("{glyph}{n}")).class(class));
-				}
-			}
-			if let Some(v) = q.vote_of(me).filter(|v| *v != 0 && q.created_by.id != me) {
-				let (g, class) = vote_glyph(v);
-				meta = meta.child(html::span(format!("you {g}")).class(class));
-			}
-			let mut card = html::div().class(if Some(id) == cur { "rpr cur" } else { "rpr" }).on_click(Msg::Open(id));
-			// Without the project headers, each card says which project and repo it is in.
-			if self.sort != SortMode::Project {
-				card = card.child(
-					html::div()
-						.class("rpj")
-						.child(html::span("").class(format!("pd av{}", name_hue(name))))
-						.child(html::span(name.to_owned()))
-						.child(html::span(format!("/ {}", q.repository.name)).class("rr")),
-				);
-			}
-			rail = rail.child(card.child(html::div().class("rt").child(html::span(q.title.clone()))).child(meta));
-		}
-		rail
-	}
-
 	/// The whole screen: the filter bar over the navigation rail and the open pull request (the rail alone on a narrow
 	/// pane until one is opened).
 	fn shell(&self) -> ui::Col<Msg> {
-		let wide = self.cols >= RAIL_MIN_COLS;
 		// It grows to fill the native column; without that it is only as tall as its content (the rail).
 		let mut shell = html::div().class("shell").grow(1.0);
-		match (&self.page, wide) {
+		let rail = self.rail_shown();
+		let msg = if self.loading && self.prs.is_empty() { "Loading pull requests\u{2026}" } else { "Pick a pull request." };
+		let empty = || html::div().class("lwm").child(html::div().class("azmsg").child(html::span(msg)));
+		match (&self.page, rail) {
 			(Some(p), true) => shell = shell.child(self.topbar()).child(html::div().class("lw").child(self.rail()).child(self.page_pane(p))),
-			(Some(p), false) => shell = shell.child(self.page_pane(p)),
-			(None, true) => {
-				let msg = if self.loading && self.prs.is_empty() { "Loading pull requests\u{2026}" } else { "Pick a pull request." };
-				let pane = html::div().class("lwm").child(html::div().class("azmsg").child(html::span(msg)));
-				shell = shell.child(self.topbar()).child(html::div().class("lw").child(self.rail()).child(pane));
-			},
-			(None, false) => shell = shell.child(self.topbar()).child(self.rail().class("rail full")),
+			(Some(p), false) => shell = shell.child(self.nav_bar()).child(self.page_pane(p)),
+			(None, true) => shell = shell.child(self.topbar()).child(html::div().class("lw").child(self.rail()).child(empty())),
+			(None, false) => shell = shell.child(self.nav_bar()).child(empty()),
+		}
+		if let Some(picker) = self.nav_view() {
+			shell = shell.child(picker);
 		}
 		if let Some(modal) = self.ai_modal() {
 			shell = shell.child(modal);
@@ -2262,12 +2198,6 @@ impl App {
 					self.note = "that does not look like an Azure DevOps organization".into();
 				},
 			},
-			ComposeKind::Jump => {
-				let ids = self.jump_results(&text);
-				if let Some(id) = ids.get(self.jump.min(ids.len().saturating_sub(1))).copied() {
-					self.open(id);
-				}
-			},
 			ComposeKind::Filter => {
 				self.filter = text.trim().to_owned();
 				self.fix_selection();
@@ -2334,30 +2264,6 @@ impl App {
 			self.compose = None;
 			return true;
 		}
-		if kind == ComposeKind::Jump {
-			let n = self.compose.as_ref().map_or(0, |c| self.jump_results(&c.draft).len());
-			let last = n.saturating_sub(1);
-			match key.name.as_str() {
-				"down" | "tab" if !key.shift => self.jump = (self.jump + 1).min(last),
-				"up" | "tab" => self.jump = self.jump.saturating_sub(1),
-				"n" if key.ctrl => self.jump = (self.jump + 1).min(last),
-				"p" if key.ctrl => self.jump = self.jump.saturating_sub(1),
-				"page_down" => self.jump = (self.jump + JUMP_ROWS).min(last),
-				"page_up" => self.jump = self.jump.saturating_sub(JUMP_ROWS),
-				_ => {
-					let Some(c) = &mut self.compose else { return false };
-					if key.name == "enter" {
-						let text = std::mem::take(&mut c.draft);
-						self.send(text);
-						return true;
-					}
-					c.key(key);
-					self.jump = 0;
-					return false;
-				},
-			}
-			return true;
-		}
 		let Some(c) = &mut self.compose else { return false };
 		let multiline = matches!(kind, ComposeKind::Comment(_) | ComposeKind::Inline { .. } | ComposeKind::ReviewPrompt(_));
 		if key.name == "enter" {
@@ -2404,10 +2310,10 @@ impl App {
 		if key.is("ctrl+q") {
 			return false;
 		}
+		// Tern can keep `/` for itself, so Ctrl+K opens the picker too.
 		let plain_slash = key.name == "/" && !key.ctrl && !key.alt;
 		if plain_slash || key.is("ctrl+k") {
-			self.jump = 0;
-			self.compose = Some(Composer::new(ComposeKind::Jump, String::new()));
+			self.open_nav();
 			return true;
 		}
 		if key.is("ctrl+f") && self.page.is_none() {
@@ -2536,10 +2442,9 @@ impl App {
 			"escape" | "backspace" | "q" => {
 				if p.thread.is_some() {
 					p.thread = None;
-				} else if self.cols < RAIL_MIN_COLS {
-					// Narrow: back to the navigation rail. Wide: the rail is always there.
-					self.page = None;
-					self.fix_selection();
+				} else if !self.rail_shown() {
+					// No rail beside the PR: the picker.
+					self.open_nav();
 				}
 			},
 			// Vim's next/previous change; Shift+] and Shift+[ may arrive as the unshifted key.
@@ -2704,6 +2609,15 @@ impl App {
 			Msg::AiPickUse => self.ai_pick_use(),
 			Msg::AiStart => self.ai_start(),
 			Msg::AiClose => self.ai = None,
+			Msg::AiCopy => self.ai_copy(),
+			Msg::NavOpen => self.open_nav(),
+			Msg::NavClose => self.nav = None,
+			Msg::Fold(name) => self.fold(name),
+			Msg::RailToggle => {
+				self.rail_hidden = !self.rail_hidden;
+				self.menu = None;
+			},
+			Msg::StepPr(forward) => self.step_pr(forward),
 			Msg::AiSend(text) => self.ai_save(text),
 			Msg::AiEdit(e) => self.ai_edit(&e),
 			Msg::Submit => {
@@ -2721,7 +2635,6 @@ impl App {
 							self.filter = c.draft.clone();
 							self.fix_selection();
 						},
-						ComposeKind::Jump => self.jump = 0,
 						_ => {},
 					}
 				}
@@ -2789,8 +2702,11 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 					}
 					if rows_checked.elapsed() > Duration::from_millis(1500) {
 						rows_checked = Instant::now();
-						if let Some(r) = pane_rows().filter(|r| (*r - app.rows).abs() > 0.1) {
+						if let Some((c, r)) = pane_size().filter(|(c, r)| (*r - app.rows).abs() > 0.1 || (!app.cols_fixed && (*c - app.cols).abs() > 0.1)) {
 							app.rows = r;
+							if !app.cols_fixed {
+								app.cols = c;
+							}
 							break None;
 						}
 					}
@@ -2812,6 +2728,8 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 				app.note.clear();
 				if app.ai.is_some() {
 					app.ai_key(&key);
+				} else if app.nav.is_some() {
+					app.nav_key(&key);
 				} else if app.compose.is_some() {
 					app.compose_key(&key);
 				} else if !app.key(&key) {
@@ -2820,11 +2738,15 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 			},
 			Input::Msg(m, _) => app.msg(m),
 			Input::Event(Event::Resize(r)) => {
-				app.rows = pane_rows().unwrap_or(app.rows);
+				if let Some((_, r)) = pane_size() {
+					app.rows = r;
+				}
 				if let Some(c) = r.cell {
 					app.cell_h = c.h;
 				}
-				app.cols = f64::from(r.cols);
+				if !app.cols_fixed {
+					app.cols = f64::from(r.cols);
+				}
 			},
 			_ => {},
 		}

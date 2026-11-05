@@ -21,7 +21,16 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 ## Features
 
-**One navigator for the organization.** A rail of PR cards sits beside the open pull request and never goes away, so any PR is one click from any other. Each card has the whole title, the PR id, author, age, vote counts and your own vote, grouped by project. Four dropdowns across the top filter it everywhere: Show (reviewing, created by me, all active), Project, Status (ready, draft, approved, blocked) and Sort (by project, newest first, oldest first, across every project). `/` or `Ctrl+K` opens a quick switcher that finds any PR by title, author, repo, branch or id, `[` and `]` step to the previous and next PR, and `f` filters by text. On a narrow pane the rail and the PR take turns.
+**One navigator for the organization.** A rail of PR cards sits beside the open pull request and never goes away, so any PR is one click from any other. Each card has the whole title, the PR id, author, age, vote counts and your own vote, grouped by project. Four dropdowns across the top filter it everywhere: Show (reviewing, created by me, all active), Project, Status (ready, draft, approved, blocked) and Sort (by project, newest first, oldest first, across every project). `[` and `]` step to the previous and next PR. Each project folds: click its header to collapse it.
+
+**A picker for narrow panes.** Below about 110 columns, or when you hide the sidebar with the button at the top left, the rail gives way to the PR at full width with a compact bar above it: a Pull requests button, and previous and next. The button (or `Ctrl+K`, anywhere) opens the picker: a search field over a scrollable list of the same cards, with the same Show, Project, Status and Sort filters. Type to search by title, author, repo, branch or id, `↑↓` cycle through the list (wrapping), `←→` collapse and expand the project you are in, and Enter opens. Esc on a narrow PR comes back to the picker. The width is read from the pane, and a narrow pane starts in the picker.
+
+<p align="center"><img src="docs/picker.png" alt="The picker open over the PR: a search field, the filters, and the pull requests grouped by project with Platform collapsed" width="900"></p>
+
+<table align="center"><tr>
+<td><img src="docs/narrow-picker.png" alt="A narrow pane showing the picker: the whole pane is the search field, filters and list" width="420"></td>
+<td><img src="docs/narrow-page.png" alt="The same narrow pane after opening a pull request: the PR at full width under a compact bar with Pull requests, previous and next" width="420"></td>
+</tr></table>
 
 Sort by newest or oldest and the list runs across every project at once. With the project headers gone, each card carries its project (a colored dot) and repo, so you always know where a PR lives.
 
@@ -47,7 +56,7 @@ Sort by newest or oldest and the list runs across every project at once. With th
 
 <p align="center"><img src="docs/ai-line.png" alt="The comment box under a diff line, with Explain with AI and Review with AI beside Cancel and Comment" width="900"></p>
 
-**See it before it runs.** Every one of those opens a confirmation first. It shows exactly what the agent will be told, with the PR's real description, files and comments filled in, plus the folder it will run in, the agent and the template, each with a Change or Edit link. Enter starts it, Esc closes it.
+**See it before it runs.** Every one of those opens a confirmation first. It shows exactly what the agent will be told, with the PR's real description, files and comments filled in, plus the folder it will run in, the agent and the template, each with a Change or Edit link. Enter starts it, Esc closes it, and Copy prompt (`C`) puts the filled-in prompt on the clipboard instead, for pasting into an agent that is already running.
 
 <p align="center"><img src="docs/ai-confirm.png" alt="The confirmation modal: the filled-in prompt, with the checkout folder, agent and template above it and a Start agent button" width="900"></p>
 
@@ -142,9 +151,9 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 | `i` / `t` | AI review / add the PR as context |
 | `e` / `w` | AI explain / reply on the selected comment |
 | `I` | AI settings: templates, folder, agent |
-| `/`, `Ctrl+K` | Jump to any PR |
+| `Ctrl+K` | Open the picker: search and cycle through every PR |
 | `[` / `]` | Previous / next PR |
-| `Esc` | Leave the thread you are on (narrow pane: back to the navigator) |
+| `Esc` | Leave the thread you are on (no sidebar: opens the picker) |
 
 </td></tr>
 </table>
