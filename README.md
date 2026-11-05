@@ -35,11 +35,19 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 <p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files, the diff with a comment thread under the line it is about, and the next and previous change buttons" width="900"></p>
 
-**Review with AI.** Two buttons at the top of every PR start a coding agent in a new Tern block, beside the plugin, in your local checkout of that repo: Review with AI (`i`) asks for a review of the diff, and Add as context (`t`) has it read the PR and wait for your questions. On a comment thread, Explain (`e`) and Respond with AI (`w`) ask the agent to explain the comment or draft a reply. The first time in a repo it asks for the checkout folder (prefilled when you start from a clone) and the agent: `claude`, `codex`, or any command line, with `{prompt}` marking where the prompt goes. Nothing is posted to the PR; the agent only reads and answers.
+**Review with AI.** Two buttons at the top of every PR start a coding agent in a new Tern block, beside the plugin, in your local checkout of that repo: Review with AI (`i`) asks for a review of the diff, and Add as context (`t`) has it read the PR and wait for your questions. On a comment thread, Explain (`e`) and Respond with AI (`w`) ask the agent to explain the comment or draft a reply. Click a line number in the diff and the comment box has Explain with AI and Review with AI for that line, with the code around it and anything you have typed so far. Nothing is posted to the PR; the agent only reads and answers.
 
-The gear (`I`) edits each prompt per repo. Every prompt starts as a default that needs no changes, and the editor lists the variables it can use: `{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments}`, plus `{thread} {file} {line} {comment}` for comment prompts. `Ctrl+P` previews the prompt with those filled in. Settings are saved in `config.json` next to the organization; a prompt you never changed is not saved, so improved defaults reach you.
+Questions appear where you asked them: the folder picker and prompt editor open as a panel under the buttons, inside the comment you clicked, or inside the line's comment box, never at the bottom of the screen.
 
-<p align="center"><img src="docs/ai-prompt.png" alt="Editing the review prompt: the list of variables, the preview with the PR's details filled in, and the prompt editor" width="900"></p>
+<p align="center"><img src="docs/ai-line.png" alt="The comment box under a diff line, with Explain with AI and Review with AI beside Cancel and Comment" width="900"></p>
+
+**The checkout is found for you.** The first time in a repo, tern-azdo looks where it was started: that folder's clone, or a folder named like the repo inside it or beside it, and uses it without asking. If it finds none, a picker opens next to the button: it starts in the folder the plugin started in, lists the folder above, the folders inside and the folders beside it, and you click to move around. Type to fuzzy-search folders in the current folder, its siblings and a few levels below (clones rank first); Enter uses the highlighted one.
+
+<p align="center"><img src="docs/ai-picker.png" alt="The folder picker open under the AI buttons, searching for scr, with matching folders ranked" width="900"></p>
+
+**Prompts you won't need to change, and can.** Every kind (review, context, explain, respond, explain code, review code) starts from a default that runs `git fetch`, reads the diff and the code, and reports without touching anything. The gear (`I`) edits any of them per repo, or the checkout folder or agent (`claude`, `codex`, or any command line with `{prompt}` where the prompt goes). The editor lists the variables: `{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments}`, plus `{thread} {file} {line} {comment} {code}` for comment and line prompts. Preview shows the prompt with the PR's real values filled in (`Ctrl+P`). A prompt you never changed is not saved, so better defaults reach you.
+
+<p align="center"><img src="docs/ai-prompt.png" alt="Editing the review prompt in a panel under the gear: the variables, the rendered preview, and the prompt editor" width="900"></p>
 
 **Review without leaving.** Vote (approve, approve with suggestions, wait for author, reject), start a comment thread, or reply to one. Open the PR in the browser, or copy its link or source branch.
 
@@ -119,7 +127,7 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 | `}` / `{` | Next / previous change in the diff |
 | `i` / `t` | AI review / add the PR as context |
 | `e` / `w` | AI explain / reply on the selected comment |
-| `I` | AI settings: prompts, checkout, agent |
+| `I` | AI settings: prompts, checkout folder, agent |
 | `/`, `Ctrl+K` | Jump to any PR |
 | `[` / `]` | Previous / next PR |
 | `Esc` | Leave the thread you are on (narrow pane: back to the navigator) |
@@ -136,7 +144,8 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 
 ## Roadmap
 
-- [x] Start an AI agent on a PR or a comment
+- [x] Start an AI agent on a PR, a comment or a diff line
+- [x] Global navigator, filters and sorting across projects
 - [ ] Check out the PR branch in a local clone
 - [x] Comment on a diff line
 - [ ] Policy and build status

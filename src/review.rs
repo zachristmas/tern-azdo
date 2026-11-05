@@ -16,10 +16,14 @@ pub enum Kind {
 	Explain,
 	/// Draft a reply to a review comment.
 	Respond,
+	/// Explain the code at a line of the diff.
+	ExplainCode,
+	/// Review the code at a line of the diff.
+	ReviewCode,
 }
 
 impl Kind {
-	pub const ALL: [Kind; 4] = [Kind::Review, Kind::Context, Kind::Explain, Kind::Respond];
+	pub const ALL: [Kind; 6] = [Kind::Review, Kind::Context, Kind::Explain, Kind::Respond, Kind::ExplainCode, Kind::ReviewCode];
 
 	pub fn id(self) -> &'static str {
 		match self {
@@ -27,6 +31,8 @@ impl Kind {
 			Kind::Context => "context",
 			Kind::Explain => "explain",
 			Kind::Respond => "respond",
+			Kind::ExplainCode => "explain_code",
+			Kind::ReviewCode => "review_code",
 		}
 	}
 
@@ -36,6 +42,8 @@ impl Kind {
 			Kind::Context => "context",
 			Kind::Explain => "explain",
 			Kind::Respond => "respond",
+			Kind::ExplainCode => "explain code",
+			Kind::ReviewCode => "review code",
 		}
 	}
 
@@ -45,6 +53,8 @@ impl Kind {
 			Kind::Context => CONTEXT,
 			Kind::Explain => EXPLAIN,
 			Kind::Respond => RESPOND,
+			Kind::ExplainCode => EXPLAIN_CODE,
+			Kind::ReviewCode => REVIEW_CODE,
 		}
 	}
 }
@@ -83,6 +93,23 @@ const RESPOND: &str = "Draft my reply to this review comment on Azure DevOps pul
 	Write the reply as I would post it: short, specific and polite. If the comment is right, say what will change (with the code); \
 	if it is not, say why, pointing at the code. Give only the reply text. Do not post it and do not change any files.";
 
+const EXPLAIN_CODE: &str = "Explain this code from Azure DevOps pull request !{id}, \"{title}\" ({project}/{repo}, {source} into {target}).\n\
+	Link: {url}\n\n\
+	File: {file}, around line {line}\n\
+	{code}\n\n\
+	Run `git fetch origin {source} {target}`, then read {file} and `git diff origin/{target}...origin/{source} -- {file}`. \
+	Explain what this code does, what the change to it does and why it may have been made, and anything surprising or risky about it. \
+	Do not post anything to the pull request and do not change any files.";
+
+const REVIEW_CODE: &str = "Review this code from Azure DevOps pull request !{id}, \"{title}\" ({project}/{repo}, {source} into {target}).\n\
+	Link: {url}\n\n\
+	File: {file}, around line {line}\n\
+	{code}\n\n\
+	My note on it, if any: {comment}\n\n\
+	Run `git fetch origin {source} {target}`, then read {file} and `git diff origin/{target}...origin/{source} -- {file}`. \
+	Review the code at and around that line for bugs, edge cases, security problems and needless complexity, and say whether my note is right. \
+	Give findings by line, most serious first. Do not post anything to the pull request and do not change any files.";
+
 /// The values a prompt can use, as `{name}` (see [`NAMES`]).
 #[derive(Clone, Debug, Default)]
 pub struct Vars {
@@ -101,10 +128,11 @@ pub struct Vars {
 	pub file:        String,
 	pub line:        String,
 	pub comment:     String,
+	pub code:        String,
 }
 
 /// The variables, for the hint above the prompt editor.
-pub const NAMES: &str = "{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments} {thread} {file} {line} {comment}";
+pub const NAMES: &str = "{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments} {thread} {file} {line} {comment} {code}";
 
 /// The prompt with its variables filled in.
 pub fn render(prompt: &str, v: &Vars) -> String {
@@ -124,6 +152,7 @@ pub fn render(prompt: &str, v: &Vars) -> String {
 		("{file}", &v.file),
 		("{line}", &v.line),
 		("{comment}", &v.comment),
+		("{code}", &v.code),
 	];
 	// One pass, so a value that contains `{title}` stays as written.
 	let mut out = String::with_capacity(prompt.len());
@@ -179,18 +208,135 @@ pub fn launch(dir: &str, argv: &[String]) -> anyhow::Result<String> {
 	Ok(format!("started {} in {dir}", argv.first().map_or("the agent", String::as_str)))
 }
 
-/// The current directory when it is a checkout of `repo` (its `origin` ends in the repo's name).
-pub fn guess_dir(repo: &str) -> Option<String> {
-	let git = |args: &[&str]| {
-		let out = std::process::Command::new("git").args(args).output().ok().filter(|o| o.status.success())?;
-		Some(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-	};
-	let url = git(&["remote", "get-url", "origin"])?;
-	let name = url.trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next()?.to_lowercase();
-	if name != repo.to_lowercase() {
-		return None;
+fn git(dir: Option<&Path>, args: &[&str]) -> Option<String> {
+	let mut cmd = std::process::Command::new("git");
+	if let Some(d) = dir {
+		cmd.arg("-C").arg(d);
 	}
-	git(&["rev-parse", "--show-toplevel"]).map(|p| if cfg!(windows) { p.replace('/', "\\") } else { p })
+	let out = cmd.args(args).output().ok().filter(|o| o.status.success())?;
+	Some(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// Whether `dir` is a git checkout whose `origin` is a repo called `repo`.
+fn is_checkout_of(dir: &Path, repo: &str) -> bool {
+	let Some(url) = git(Some(dir), &["remote", "get-url", "origin"]) else { return false };
+	url.trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next().is_some_and(|n| n.eq_ignore_ascii_case(repo))
+}
+
+/// Where the clone of `repo` is, from where the plugin started: that folder's repo, a folder called `repo` inside it or
+/// beside it, or the same up one more level.
+pub fn find_checkout(repo: &str) -> Option<String> {
+	let here = std::env::current_dir().ok()?;
+	if let Some(top) = git(Some(&here), &["rev-parse", "--show-toplevel"]) {
+		let top = std::path::PathBuf::from(top);
+		if is_checkout_of(&top, repo) {
+			return Some(show(&top));
+		}
+	}
+	let mut bases = vec![here.clone()];
+	bases.extend(here.ancestors().skip(1).take(2).map(Path::to_path_buf));
+	for base in bases {
+		let Ok(entries) = std::fs::read_dir(&base) else { continue };
+		for e in entries.flatten() {
+			let path = e.path();
+			if path.is_dir() && e.file_name().to_string_lossy().eq_ignore_ascii_case(repo) && is_checkout_of(&path, repo) {
+				return Some(show(&path));
+			}
+		}
+	}
+	None
+}
+
+/// A path as text, with the separators the OS uses.
+pub fn show(path: &Path) -> String {
+	let text = path.to_string_lossy().into_owned();
+	text.strip_prefix(r"\\?\").map_or(text.clone(), str::to_owned)
+}
+
+/// A folder in the picker.
+pub struct Dir {
+	pub name: String,
+	pub path: std::path::PathBuf,
+	/// It holds a `.git`.
+	pub git:  bool,
+}
+
+/// The folders inside `dir`, by name, without hidden ones.
+pub fn subdirs(dir: &Path) -> Vec<Dir> {
+	let mut v: Vec<Dir> = std::fs::read_dir(dir)
+		.into_iter()
+		.flatten()
+		.flatten()
+		.filter(|e| e.path().is_dir())
+		.map(|e| {
+			let path = e.path();
+			Dir { name: e.file_name().to_string_lossy().into_owned(), git: path.join(".git").exists(), path }
+		})
+		.filter(|d| !d.name.starts_with('.'))
+		.collect();
+	v.sort_by_key(|d| d.name.to_lowercase());
+	v
+}
+
+/// How well `q` matches `hay` as a fuzzy (in-order, not necessarily touching) match, case-insensitive; None when it does not.
+pub fn fuzzy(q: &str, hay: &str) -> Option<i32> {
+	let q: Vec<char> = q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+	let h: Vec<char> = hay.to_lowercase().chars().collect();
+	let (mut qi, mut score, mut last) = (0, 0, None::<usize>);
+	for (i, c) in h.iter().enumerate() {
+		if qi < q.len() && *c == q[qi] {
+			score += 10;
+			if last.is_some_and(|l| l + 1 == i) {
+				score += 15;
+			}
+			if i == 0 || !h[i - 1].is_alphanumeric() {
+				score += 10;
+			}
+			last = Some(i);
+			qi += 1;
+		}
+	}
+	(qi == q.len()).then(|| score - h.len() as i32 / 4)
+}
+
+/// Folders matching `q` near `dir`: inside it (three levels down), and beside it with theirs (two levels), best first.
+pub fn search(dir: &Path, q: &str) -> Vec<Dir> {
+	const SKIP: [&str; 6] = ["node_modules", "target", "bin", "obj", "dist", "packages"];
+	let mut seen = std::collections::HashSet::new();
+	let mut found: Vec<(i32, Dir)> = Vec::new();
+	let mut visited = 0;
+	let mut roots = vec![(dir.to_path_buf(), 3, String::new())];
+	if let Some(parent) = dir.parent() {
+		roots.push((parent.to_path_buf(), 2, String::new()));
+	}
+	for (root, depth, _) in roots {
+		let mut level = vec![(root.clone(), String::new())];
+		for _ in 0..depth {
+			let mut next = Vec::new();
+			for (base, label) in &level {
+				for d in subdirs(base) {
+					visited += 1;
+					if visited > 4000 {
+						break;
+					}
+					let rel = if label.is_empty() { d.name.clone() } else { format!("{label}/{}", d.name) };
+					if !seen.insert(d.path.clone()) {
+						continue;
+					}
+					let by_name = fuzzy(q, &d.name).map(|n| n + 30);
+					if let Some(score) = by_name.or_else(|| fuzzy(q, &rel)) {
+						found.push((score + if d.git { 20 } else { 0 }, Dir { name: rel.clone(), path: d.path.clone(), git: d.git }));
+					}
+					if !SKIP.contains(&d.name.as_str()) {
+						next.push((d.path, rel));
+					}
+				}
+			}
+			level = next;
+		}
+	}
+	found.sort_by_key(|(score, d)| (std::cmp::Reverse(*score), d.name.len()));
+	found.into_iter().take(60).map(|(_, d)| d).collect()
 }
 
 #[cfg(test)]
@@ -202,6 +348,14 @@ mod tests {
 		assert_eq!(argv("claude", "a b\nc"), ["claude", "a b\nc"]);
 		assert_eq!(argv("codex --model x {prompt}", "p q"), ["codex", "--model", "x", "p q"]);
 		assert_eq!(argv("  ", "p"), ["claude", "p"]);
+	}
+
+	#[test]
+	fn fuzzy_matches_in_order_and_prefers_tight_matches() {
+		assert!(fuzzy("ldgr", "ledger").is_some());
+		assert!(fuzzy("rgdl", "ledger").is_none());
+		assert!(fuzzy("led", "ledger") > fuzzy("led", "a-l-e-d"));
+		assert!(fuzzy("LED", "Ledger").is_some());
 	}
 
 	#[test]

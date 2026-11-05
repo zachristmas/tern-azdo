@@ -32,8 +32,6 @@ const CSS_PER_CELL_H: f64 = 0.78;
 const ROW_PX: f64 = 22.0;
 /// Context lines around each change; `x` shows the whole file.
 const CONTEXT: usize = 3;
-/// Lines the prompt preview takes.
-const PREVIEW_LINES: f64 = 9.0;
 /// Lines of the file shown above a change when a jump scrolls to it.
 const JUMP_LEAD: usize = 5;
 /// The pane width (in columns) from which the navigation rail shows; below it `/` jumps between PRs.
@@ -83,6 +81,14 @@ const CSS: &str = "\
 .ddi .n{margin-left:auto;color:var(--sf-c-muted);font-variant-numeric:tabular-nums}\
 .ptabs{display:flex;gap:4px;margin:2px 4px 0;border-bottom:1px solid color-mix(in srgb,var(--sf-c-muted) 28%,transparent);flex-shrink:0}\
 .ptab{padding:6px 12px;cursor:pointer;color:var(--sf-c-muted);border-bottom:2px solid transparent}\
+.azcbf>.azbtn.ai+.azbtn.ai{margin-right:auto}\
+.aipop{box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:8px;white-space:normal;background:var(--sf-c-bg,#1e1e22);border:1px solid var(--sf-c-accent);font-family:Geist,system-ui,sans-serif}\
+.rvd>.aipop{position:absolute;top:calc(100% + 6px);right:0;width:640px;max-width:85vw;z-index:30;box-shadow:0 8px 24px rgba(0,0,0,.5)}\
+.card>.aipop,.azcbox>.aipop{margin:8px 0 4px 36px}\
+.aipop .apt{font-weight:600}.aipop .apd{color:var(--sf-c-muted);font-size:12px;word-break:break-all}.aipop .aph{font-size:11.5px}\
+.aipop .aps{padding:5px 9px;border-radius:6px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);font-family:ui-monospace,Consolas,monospace;font-size:12.5px}\
+.aipop .apl{max-height:300px;overflow-y:auto}.aipop .apf{display:flex;align-items:center;gap:8px}.aipop .apf .dim{margin-right:auto}\
+.aipop .apr{display:flex}.pvx{max-height:220px;overflow-y:auto;white-space:pre-wrap;padding:6px 10px;border-radius:6px;font-size:12px;background:color-mix(in srgb,var(--sf-c-muted) 12%,transparent)}\
 .rvd{margin-left:2px;align-self:center}.rvd .ddm{left:auto;right:0;min-width:230px}.rvg.on{color:inherit}\
 .rvb.sec{margin-left:0;margin-right:2px;background:transparent;border-color:color-mix(in srgb,var(--sf-c-muted) 50%,transparent)}\
 .cact{display:flex;gap:10px;padding:4px 0 0 36px}.cab{color:var(--sf-c-muted);cursor:pointer;font-size:12px}.cab:hover{color:var(--sf-c-accent)}\
@@ -232,8 +238,18 @@ enum Msg {
 	ReviewMenu,
 	/// The menu: edit one kind of prompt.
 	EditPrompt(review::Kind),
-	/// The menu: this repo's checkout and agent.
+	/// The menu: pick this repo's checkout.
 	ReviewSetup,
+	/// The menu: this repo's agent.
+	ReviewAgent,
+	/// The comment box on a diff line: ask an AI about that line.
+	AiLine(review::Kind),
+	/// The checkout picker: show this folder.
+	PickGo(std::path::PathBuf),
+	/// The checkout picker: use the folder shown.
+	PickUse,
+	/// The checkout picker: cancel.
+	PickCancel,
 	/// Show or hide the prompt preview.
 	Preview,
 	Send(String),
@@ -379,9 +395,7 @@ enum ComposeKind {
 	Comment(Option<u32>),
 	/// The quick switcher: type to pick any pull request.
 	Jump,
-	/// Review settings, step 1: the local checkout of the repo.
-	ReviewDir,
-	/// Step 2: which agent to run.
+	/// Which agent to run.
 	ReviewAgent,
 	/// Edit one kind of prompt.
 	ReviewPrompt(review::Kind),
@@ -476,6 +490,35 @@ enum FileState {
 	Loading,
 	Failed(String),
 	Ready { sides: Sides, diff: FileDiff },
+}
+
+/// One AI request: what to ask, about which comment thread, or which diff line (its number, whether it is on the old side, and the
+/// comment being drafted).
+#[derive(Clone, Debug)]
+struct AiReq {
+	kind:   review::Kind,
+	thread: Option<u32>,
+	line:   Option<(u32, bool, String)>,
+}
+
+/// Where an AI question or setting is asked: by the buttons at the top, by a comment, or in a line's comment box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AiAnchor {
+	Header,
+	Thread(u32),
+	Line,
+}
+
+impl AiReq {
+	fn anchor(&self) -> AiAnchor {
+		if self.line.is_some() {
+			return AiAnchor::Line;
+		}
+		match (self.thread, self.kind) {
+			(Some(t), review::Kind::Explain | review::Kind::Respond) => AiAnchor::Thread(t),
+			_ => AiAnchor::Header,
+		}
+	}
 }
 
 struct Page {
@@ -629,7 +672,14 @@ struct App {
 	review:  config::Review,
 	review_key: String,
 	/// What to run once the repo's checkout and agent are set (a kind, and the comment thread for comment prompts).
-	review_next: Option<(review::Kind, Option<u32>)>,
+	review_next: Option<AiReq>,
+	/// The folder the checkout picker shows, and the highlighted row.
+	pick: Option<std::path::PathBuf>,
+	pick_sel: usize,
+	/// What is typed to search the picker's folders.
+	pick_q: String,
+	/// Where the picker or prompt editor shows.
+	ai_at: AiAnchor,
 	/// The review settings menu behind the gear is open.
 	rv_menu: bool,
 	/// Show the prompt being edited with its variables filled in.
@@ -915,6 +965,10 @@ impl App {
 			review: config::Review::default(),
 			review_key: String::new(),
 			review_next: None,
+			pick: None,
+			pick_sel: 0,
+			pick_q: String::new(),
+			ai_at: AiAnchor::Header,
 			rv_menu: false,
 			preview: false,
 			page: None,
@@ -1232,12 +1286,10 @@ impl App {
 
 	/// Lines for the main region (the dock takes the rest).
 	fn avail(&self) -> f64 {
-		let mut dock = 2.0 + if self.compose.is_some() || self.voting { 2.2 } else { 0.0 };
+		let in_dock = self.compose.as_ref().is_some_and(|c| !matches!(c.kind, ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent));
+		let mut dock = 2.0 + if in_dock || self.voting { 2.2 } else { 0.0 };
 		if let Some(c) = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Jump) {
 			dock += 1.45 * self.jump_results(&c.draft).len().clamp(1, JUMP_ROWS) as f64 + 0.8;
-		}
-		if self.compose.as_ref().is_some_and(|c| matches!(c.kind, ComposeKind::ReviewPrompt(_))) {
-			dock += 2.2 + if self.preview { PREVIEW_LINES + 0.5 } else { 0.0 };
 		}
 		(self.rows - dock - 0.5).max(6.0)
 	}
@@ -1302,32 +1354,11 @@ impl App {
 			}
 			dock.push(list.into());
 		}
-		if let Some(c) = self.compose.as_ref().filter(|c| matches!(c.kind, ComposeKind::ReviewPrompt(_))) {
-			dock.push(
-				html::div()
-					.class("prompt rvp")
-					.child(html::span(if self.preview { "Preview on" } else { "Preview" }).class(if self.preview { "pvt on" } else { "pvt" }).on_click(Msg::Preview))
-					.child(html::span(review::NAMES).class("dim"))
-					.into(),
-			);
-			if self.preview {
-				let text = self.prompt_preview(&c.draft);
-				let lines = PREVIEW_LINES;
-				dock.push(
-					ui::col()
-						.min(ui::Bound::h(ui::Extent::Lines(lines)))
-						.max(ui::Bound::h(ui::Extent::Lines(lines)))
-						.child(html::div().class("pvb").grow(1.0).child(html::span(text)))
-						.into(),
-				);
-			}
-		}
-		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. })) {
+		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. } | ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent)) {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
-				ComposeKind::ReviewDir => "AI setup (1/2): local checkout of this repo, where the agent starts (Enter next, Esc cancels)".into(),
-				ComposeKind::ReviewAgent => "AI setup (2/2): agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
+				ComposeKind::ReviewAgent => "Agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
 				ComposeKind::ReviewPrompt(k) => format!("The {} prompt for this repo (Enter saves, Shift+Enter new line, Ctrl+P preview, Esc cancels)", k.label()),
 				ComposeKind::Jump => "Jump to a PR: type part of its title, author, repo or id (Up/Down choose, Enter opens, Esc cancels)".into(),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
@@ -1575,8 +1606,12 @@ impl App {
 			for k in review::Kind::ALL {
 				m = m.child(html::div().class("ddi").on_click(Msg::EditPrompt(k)).child(html::span(format!("Edit the {} prompt", k.label()))));
 			}
-			m = m.child(html::div().class("ddi").on_click(Msg::ReviewSetup).child(html::span("Checkout folder and agent")));
+			m = m.child(html::div().class("ddi").on_click(Msg::ReviewSetup).child(html::span("Checkout folder")));
+			m = m.child(html::div().class("ddi").on_click(Msg::ReviewAgent).child(html::span("Agent")));
 			d = d.child(m);
+		}
+		if let Some(panel) = self.ai_panel(AiAnchor::Header) {
+			d = d.child(panel);
 		}
 		d
 	}
@@ -1616,6 +1651,9 @@ impl App {
 				.child(html::span("Explain").class("cab").title("Ask an AI agent to explain this comment (e)").on_click(Msg::Ai(review::Kind::Explain, Some(t.id))))
 				.child(html::span("Respond with AI").class("cab").title("Ask an AI agent to draft a reply (w)").on_click(Msg::Ai(review::Kind::Respond, Some(t.id)))),
 		);
+		if let Some(panel) = self.ai_panel(AiAnchor::Thread(t.id)) {
+			card = card.child(panel);
+		}
 		if selected {
 			card = card.child(html::div().class("hint").child(html::span("a reply · e explain · w AI reply · n next · Esc done")));
 		}
@@ -1905,9 +1943,12 @@ impl App {
 			.child(
 				html::div()
 					.class("azcbf")
+					.child(html::button("Explain with AI").class("azbtn ai").title("Ask an AI agent to explain this code").on_click(Msg::AiLine(review::Kind::ExplainCode)))
+					.child(html::button("Review with AI").class("azbtn ai").title("Ask an AI agent to review this code").on_click(Msg::AiLine(review::Kind::ReviewCode)))
 					.child(html::button("Cancel").class("azbtn").on_click(Msg::Cancel))
 					.child(html::button("Comment").class("azbtn pri").on_click(Msg::Submit)),
 			)
+			.children(self.ai_panel(AiAnchor::Line))
 			.into()
 	}
 
@@ -2125,7 +2166,7 @@ impl App {
 
 	/// What a prompt can use: the open PR, and for the comment prompts one thread (the given one, else the selected one,
 	/// else the first).
-	fn review_vars(&self, thread: Option<u32>) -> Option<review::Vars> {
+	fn review_vars(&self, thread: Option<u32>, line: Option<&(u32, bool, String)>) -> Option<review::Vars> {
 		let p = self.page.as_ref()?;
 		let pr = &p.pr;
 		let none = |s: String, empty: &str| if s.trim().is_empty() { empty.to_owned() } else { s };
@@ -2163,39 +2204,266 @@ impl App {
 				})
 				.collect();
 			v.comments = comments.join("\n");
-			let t = thread
-				.or(p.thread)
-				.and_then(|id| d.threads.iter().find(|t| t.id == id && t.shown()))
-				.or_else(|| d.threads.iter().find(|t| t.shown()));
+			let t = if line.is_some() {
+				None
+			} else {
+				thread.or(p.thread).and_then(|id| d.threads.iter().find(|t| t.id == id && t.shown())).or_else(|| d.threads.iter().find(|t| t.shown()))
+			};
 			if let Some(t) = t {
 				let say = |c: &api::Comment| format!("{}: {}", c.author.display_name, c.content.as_deref().unwrap_or_default().trim());
 				v.thread = t.human().map(say).collect::<Vec<_>>().join("\n\n");
 				v.file = t.file().map_or_else(|| "the pull request".to_owned(), |f| f.trim_start_matches('/').to_owned());
 				v.line = t.line().map_or_else(|| "n/a".to_owned(), |l| l.to_string());
 				v.comment = t.human().last().and_then(|c| c.content.clone()).unwrap_or_default();
+				v.code = Self::code_at(p, t.file().unwrap_or_default(), t.line().unwrap_or(0), t.on_left());
 			}
+		}
+		if let Some((l, left, draft)) = line
+			&& let Some(c) = p.change()
+		{
+			v.file = c.path().trim_start_matches('/').to_owned();
+			v.line = l.to_string();
+			v.comment = if draft.trim().is_empty() { "(none)".into() } else { draft.clone() };
+			v.code = Self::code_at(p, c.path(), *l, *left);
 		}
 		v.files = none(v.files, "(still loading)");
 		v.comments = none(v.comments, "(none)");
 		v.thread = none(v.thread, "(no comment)");
 		v.file = none(v.file, "n/a");
 		v.line = none(v.line, "n/a");
+		v.code = none(v.code, "(not loaded)");
 		Some(v)
 	}
 
-	/// Walk through this repo's checkout and agent; then run `next`, if any.
-	fn review_setup(&mut self, next: Option<(review::Kind, Option<u32>)>) {
-		let Some((key, mut r)) = self.review_settings() else { return };
-		let repo = self.page.as_ref().map(|p| p.pr.repository.name.clone()).unwrap_or_default();
-		if r.dir.trim().is_empty() {
-			r.dir = review::guess_dir(&repo).unwrap_or_default();
+	/// The lines around `line` of a loaded file, numbered, with `line` marked.
+	fn code_at(p: &Page, path: &str, line: u32, left: bool) -> String {
+		let Some(FileState::Ready { sides, .. }) = p.files.get(path) else { return String::new() };
+		let Some(text) = (if left { &sides.0 } else { &sides.1 }).as_ref() else { return String::new() };
+		let lines: Vec<&str> = text.lines().collect();
+		let n = line as usize;
+		if n == 0 || n > lines.len() {
+			return String::new();
 		}
-		self.note = format!("AI settings for {repo}");
+		(n.saturating_sub(5).max(1)..=(n + 5).min(lines.len()))
+			.map(|i| format!("{}{i:>5}: {}", if i == n { ">" } else { " " }, lines[i - 1]))
+			.collect::<Vec<_>>()
+			.join("\n")
+	}
+
+	/// Show the checkout picker, starting at the saved folder, else the clone found from where the plugin started, else
+	/// that folder; then run `next`, if any, once a folder is chosen.
+	fn review_setup(&mut self, next: Option<AiReq>) {
+		let Some((key, r)) = self.review_settings() else { return };
+		let repo = self.page.as_ref().map(|p| p.pr.repository.name.clone()).unwrap_or_default();
+		let start = Some(r.dir.trim().to_owned())
+			.filter(|d| std::path::Path::new(d).is_dir())
+			.or_else(|| review::find_checkout(&repo))
+			.or_else(|| std::env::current_dir().ok().map(|d| review::show(&d)))
+			.unwrap_or_default();
+		self.note = format!("pick the folder of the {repo} clone");
 		self.rv_menu = false;
-		self.compose = Some(Composer::new(ComposeKind::ReviewDir, r.dir.clone()));
+		self.pick = Some(std::path::PathBuf::from(start));
+		self.pick_sel = 0;
+		self.pick_q.clear();
+		self.ai_at = next.as_ref().map_or(AiAnchor::Header, AiReq::anchor);
+		// Bring the comment (and the panel in it) into view.
+		if let AiAnchor::Thread(id) = self.ai_at {
+			let files = self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files);
+			self.scroll_req = Some(ScrollReq::Reveal(format!("{}.t{id}", if files { FILES_DS } else { OV_MAIN })));
+		}
 		self.review = r;
 		self.review_key = key;
 		self.review_next = next;
+	}
+
+	/// The checkout picker or the prompt or agent editor, as a panel next to what asked for it.
+	fn ai_panel(&self, at: AiAnchor) -> Option<html::El<Msg>> {
+		if self.ai_at != at {
+			return None;
+		}
+		let repo = self.page.as_ref().map(|p| p.pr.repository.name.clone()).unwrap_or_default();
+		let btn = |label: &str, pri: bool, m: Msg| html::button(label.to_owned()).class(if pri { "azbtn pri" } else { "azbtn" }).on_click(m);
+		if let Some(dir) = &self.pick {
+			let rows = self.pick_rows();
+			let cur = self.pick_sel.min(rows.len().saturating_sub(1));
+			let first = cur.saturating_sub(JUMP_ROWS - 1).min(rows.len().saturating_sub(JUMP_ROWS));
+			let mut list = html::div().class("apl");
+			for (i, (kind, d)) in rows.iter().enumerate().skip(first).take(JUMP_ROWS) {
+				let (glyph, hint) = match kind {
+					'u' => ("\u{2191}", "up"),
+					'c' => ("\u{25b8}", "inside"),
+					'f' => ("\u{25b8}", "match"),
+					_ => ("\u{2194}", "beside"),
+				};
+				list = list.child(
+					html::div()
+						.class(if i == cur { "row cur" } else { "row" })
+						.on_click(Msg::PickGo(d.path.clone()))
+						.child(html::span(glyph).class("id"))
+						.child(html::span(d.name.clone()).class("t"))
+						.child(html::span(if d.git { format!("{hint} \u{b7} git") } else { hint.to_owned() }).class("pj")),
+				);
+			}
+			if rows.is_empty() {
+				list = list.child(html::div().class("row").child(html::span("No folders here.").class("dim")));
+			}
+			return Some(
+				html::div()
+					.key("aipop")
+					.class("aipop")
+					.child(html::div().class("apt").child(html::span(format!("Which folder is the {repo} clone?"))))
+					.child(html::div().class("apd").child(html::span(review::show(dir))))
+					.child(html::div().class("aps").child(html::span(if self.pick_q.is_empty() { "Type to search folders".to_owned() } else { format!("{}\u{2581}", self.pick_q) }).class(if self.pick_q.is_empty() { "dim" } else { "" })))
+					.child(list)
+					.child(
+						html::div()
+							.class("apf")
+							.child(html::span(if self.pick_q.is_empty() { "click a folder or use the arrows; Enter uses the folder shown" } else { "Enter uses the highlighted folder; Esc clears the search" }).class("dim"))
+							.child(btn("Cancel", false, Msg::PickCancel))
+							.child(btn("Use this folder", true, Msg::PickUse)),
+					),
+			);
+		}
+		let c = self.compose.as_ref().filter(|c| matches!(c.kind, ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent))?;
+		let mut panel = html::div().key("aipop").class("aipop");
+		let prompt = matches!(c.kind, ComposeKind::ReviewPrompt(_));
+		panel = panel.child(html::div().class("apt").child(html::span(match c.kind {
+			ComposeKind::ReviewPrompt(k) => format!("The {} prompt for {repo}", k.label()),
+			_ => format!("Agent for {repo}"),
+		})));
+		if prompt {
+			panel = panel
+				.child(html::div().class("dim aph").child(html::span(format!("Variables: {}", review::NAMES))))
+				.child(html::div().class("apr").child(html::span(if self.preview { "Hide preview" } else { "Preview" }).class("pvt").on_click(Msg::Preview)));
+			if self.preview {
+				panel = panel.child(html::div().class("pvx").child(html::span(self.prompt_preview(&c.draft))));
+			}
+		} else {
+			panel = panel.child(html::div().class("dim aph").child(html::span("claude, codex, or a command line; {prompt} marks where the prompt goes")));
+		}
+		let editor = ui::editor()
+			.key("aied")
+			.text(c.draft.clone())
+			.cursor(c.utf16_cursor())
+			.placeholder("")
+			.sendable(true)
+			.max_lines(if prompt { 10u32 } else { 2 })
+			.on_send(|t| Msg::Send(t.to_owned()))
+			.on_edit(|e| Msg::Edit(e.clone()))
+			.on_focus(Msg::Focus);
+		Some(
+			panel.child(editor).child(
+				html::div()
+					.class("apf")
+					.child(html::span(if prompt { "Enter saves \u{b7} Shift+Enter new line \u{b7} Ctrl+P preview" } else { "Enter saves" }).class("dim"))
+					.child(btn("Cancel", false, Msg::Cancel))
+					.child(btn("Save", true, Msg::Submit)),
+			),
+		)
+	}
+
+	/// The editor to focus: the one in the open panel, else the line's, else the dock's.
+	fn focus_path(&self) -> Option<String> {
+		let c = self.compose.as_ref()?;
+		if matches!(c.kind, ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent) {
+			let files = self.page.as_ref().is_some_and(|p| p.tab == PrTab::Files);
+			return Some(match self.ai_at {
+				AiAnchor::Header => "main.pbody.aipop.aied".to_owned(),
+				AiAnchor::Thread(id) => format!("{}.t{id}.aipop.aied", if files { FILES_DS } else { OV_MAIN }),
+				AiAnchor::Line => "main.pbody.fv.dp.ds.cbox.aipop.aied".to_owned(),
+			});
+		}
+		Some(if matches!(c.kind, ComposeKind::Inline { .. }) { LINE_EDITOR } else { COMPOSER }.to_owned())
+	}
+
+	/// The picker's rows: the folder above, the folders inside, the folders beside it.
+	fn pick_rows(&self) -> Vec<(char, review::Dir)> {
+		let Some(dir) = &self.pick else { return Vec::new() };
+		if !self.pick_q.trim().is_empty() {
+			return review::search(dir, &self.pick_q).into_iter().map(|d| ('f', d)).collect();
+		}
+		let mut rows = Vec::new();
+		if let Some(parent) = dir.parent() {
+			let name = parent.file_name().map_or_else(|| review::show(parent), |n| n.to_string_lossy().into_owned());
+			rows.push(('u', review::Dir { name: format!("..  {name}"), path: parent.to_path_buf(), git: parent.join(".git").exists() }));
+			rows.extend(review::subdirs(dir).into_iter().take(60).map(|d| ('c', d)));
+			rows.extend(review::subdirs(parent).into_iter().filter(|d| d.path != *dir).take(60).map(|d| ('s', d)));
+		} else {
+			rows.extend(review::subdirs(dir).into_iter().take(60).map(|d| ('c', d)));
+		}
+		rows
+	}
+
+	fn pick_key(&mut self, key: &Key) {
+		let rows = self.pick_rows();
+		let last = rows.len().saturating_sub(1);
+		let searching = !self.pick_q.is_empty();
+		let go = |app: &mut Self, path: std::path::PathBuf| {
+			app.pick = Some(path);
+			app.pick_sel = 0;
+			app.pick_q.clear();
+		};
+		match key.name.as_str() {
+			"escape" if searching => {
+				self.pick_q.clear();
+				self.pick_sel = 0;
+			},
+			"escape" => {
+				self.pick = None;
+				self.review_next = None;
+			},
+			// Searching: use the highlighted folder. Otherwise: the folder shown.
+			"enter" if searching => {
+				if let Some((_, d)) = rows.get(self.pick_sel.min(last)) {
+					go(self, d.path.clone());
+					self.pick_use();
+				}
+			},
+			"enter" => self.pick_use(),
+			"down" => self.pick_sel = (self.pick_sel + 1).min(last),
+			"up" => self.pick_sel = self.pick_sel.saturating_sub(1),
+			"page_down" => self.pick_sel = (self.pick_sel + JUMP_ROWS).min(last),
+			"page_up" => self.pick_sel = self.pick_sel.saturating_sub(JUMP_ROWS),
+			"right" | "tab" => {
+				if let Some((_, d)) = rows.get(self.pick_sel.min(last)) {
+					go(self, d.path.clone());
+				}
+			},
+			"left" => {
+				if let Some(parent) = self.pick.as_ref().and_then(|d| d.parent()).map(std::path::Path::to_path_buf) {
+					go(self, parent);
+				}
+			},
+			"backspace" if searching => {
+				self.pick_q.pop();
+				self.pick_sel = 0;
+			},
+			"backspace" => {
+				if let Some(parent) = self.pick.as_ref().and_then(|d| d.parent()).map(std::path::Path::to_path_buf) {
+					go(self, parent);
+				}
+			},
+			_ => {
+				if let Some(text) = key.typed().filter(|_| !key.ctrl && !key.alt) {
+					self.pick_q.push_str(&text.to_owned());
+					self.pick_sel = 0;
+				}
+			},
+		}
+	}
+
+	/// Use the folder the picker shows, and go on with the request that was waiting for it.
+	fn pick_use(&mut self) {
+		let Some(dir) = self.pick.take() else { return };
+		self.review.dir = review::show(&dir);
+		if let Err(e) = config::save_review(&self.review_key, self.review.clone()) {
+			self.note = format!("could not save the AI settings: {e}");
+			return;
+		}
+		match self.review_next.take() {
+			Some(req) => self.run_req(req),
+			None => self.note = if dir.join(".git").exists() { "saved the checkout folder".into() } else { "saved (that folder is not a git checkout)".into() },
+		}
 	}
 
 	/// Edit one kind of prompt for this repo, starting from what is saved or the default.
@@ -2203,26 +2471,42 @@ impl App {
 		let Some((key, r)) = self.review_settings() else { return };
 		let text = r.prompts.get(kind.id()).filter(|t| !t.trim().is_empty()).cloned().unwrap_or_else(|| kind.default_prompt().to_owned());
 		self.rv_menu = false;
-		self.note = "variables fill in when it runs: Ctrl+P shows the result".into();
+		self.ai_at = AiAnchor::Header;
 		self.compose = Some(Composer::new(ComposeKind::ReviewPrompt(kind), text));
 		self.review = r;
 		self.review_key = key;
 	}
 
-	/// Start the agent on the PR (or a comment thread) in a new block, in this repo's checkout.
+	/// Start the agent on the PR or a comment thread in a new block, in this repo's checkout.
 	fn run_ai(&mut self, kind: review::Kind, thread: Option<u32>) {
+		self.run_req(AiReq { kind, thread, line: None });
+	}
+
+	/// Start the agent for `req`. A repo with no checkout yet gets one found from where the plugin started, else the picker.
+	fn run_req(&mut self, req: AiReq) {
 		self.rv_menu = false;
-		let Some((_, r)) = self.review_settings() else { return };
-		if matches!(kind, review::Kind::Explain | review::Kind::Respond) && self.review_vars(thread).is_some_and(|v| v.thread == "(no comment)") {
+		let Some((key, mut r)) = self.review_settings() else { return };
+		if matches!(req.kind, review::Kind::Explain | review::Kind::Respond) && self.review_vars(req.thread, None).is_some_and(|v| v.thread == "(no comment)") {
 			self.note = "this pull request has no comments yet".into();
 			return;
 		}
 		if !std::path::Path::new(r.dir.trim()).is_dir() {
-			self.review_setup(Some((kind, thread)));
-			return;
+			let repo = self.page.as_ref().map(|p| p.pr.repository.name.clone()).unwrap_or_default();
+			match review::find_checkout(&repo) {
+				Some(dir) => {
+					r.dir = dir;
+					if let Err(e) = config::save_review(&key, r.clone()) {
+						self.note = format!("could not save the AI settings: {e}");
+					}
+				},
+				None => {
+					self.review_setup(Some(req));
+					return;
+				},
+			}
 		}
-		let Some(vars) = self.review_vars(thread) else { return };
-		let template = r.prompts.get(kind.id()).filter(|t| !t.trim().is_empty()).map_or(kind.default_prompt(), String::as_str);
+		let Some(vars) = self.review_vars(req.thread, req.line.as_ref()) else { return };
+		let template = r.prompts.get(req.kind.id()).filter(|t| !t.trim().is_empty()).map_or(req.kind.default_prompt(), String::as_str);
 		let prompt = review::render(template, &vars);
 		self.note = match review::launch(r.dir.trim(), &review::argv(&r.agent, &prompt)) {
 			Ok(m) => m,
@@ -2232,31 +2516,18 @@ impl App {
 
 	/// The prompt being edited with its variables filled in.
 	fn prompt_preview(&self, draft: &str) -> String {
-		self.review_vars(None).map(|v| review::render(draft, &v)).unwrap_or_default()
+		self.review_vars(None, None).map(|v| review::render(draft, &v)).unwrap_or_default()
 	}
 
 	fn send(&mut self, text: String) {
 		let Some(c) = self.compose.take() else { return };
 		match c.kind {
-			ComposeKind::ReviewDir => {
-				let dir = text.trim().trim_matches('"').to_owned();
-				if !std::path::Path::new(&dir).is_dir() {
-					self.note = format!("{dir} is not a folder");
-					self.compose = Some(Composer::new(ComposeKind::ReviewDir, text));
-					return;
-				}
-				self.review.dir = dir;
-				self.compose = Some(Composer::new(ComposeKind::ReviewAgent, self.review.agent.clone()));
-			},
 			ComposeKind::ReviewAgent => {
 				self.review.agent = if text.trim().is_empty() { review::DEFAULT_AGENT.into() } else { text.trim().to_owned() };
-				match config::save_review(&self.review_key, self.review.clone()) {
-					Ok(()) => match self.review_next.take() {
-						Some((kind, thread)) => self.run_ai(kind, thread),
-						None => self.note = "saved the AI settings".into(),
-					},
-					Err(e) => self.note = format!("could not save the AI settings: {e}"),
-				}
+				self.note = match config::save_review(&self.review_key, self.review.clone()) {
+					Ok(()) => "saved the agent".into(),
+					Err(e) => format!("could not save the AI settings: {e}"),
+				};
 			},
 			ComposeKind::ReviewPrompt(kind) => {
 				// The default is not saved, so a better default reaches everyone who never changed it.
@@ -2704,6 +2975,35 @@ impl App {
 			Msg::ReviewMenu => self.rv_menu = !self.rv_menu,
 			Msg::EditPrompt(kind) => self.edit_prompt(kind),
 			Msg::ReviewSetup => self.review_setup(None),
+			Msg::ReviewAgent => {
+				if let Some((key, r)) = self.review_settings() {
+					self.rv_menu = false;
+					self.ai_at = AiAnchor::Header;
+					self.compose = Some(Composer::new(ComposeKind::ReviewAgent, r.agent.clone()));
+					self.review = r;
+					self.review_key = key;
+				}
+			},
+			Msg::AiLine(kind) => {
+				let req = self.compose.as_ref().and_then(|c| match c.kind {
+					ComposeKind::Inline { line, left } => Some(AiReq { kind, thread: None, line: Some((line, left, c.draft.clone())) }),
+					_ => None,
+				});
+				if let Some(req) = req {
+					self.run_req(req);
+				}
+			},
+			Msg::PickGo(path) => {
+				self.pick = Some(path);
+				self.pick_sel = 0;
+				self.pick_q.clear();
+			},
+			Msg::PickUse => self.pick_use(),
+			Msg::PickCancel => {
+				self.pick_q.clear();
+				self.pick = None;
+				self.review_next = None;
+			},
 			Msg::Preview => self.preview = !self.preview,
 			Msg::Submit => {
 				if let Some(text) = self.compose.as_ref().map(|c| c.draft.clone()) {
@@ -2746,7 +3046,7 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	let sf = session.open(SurfaceOptions::screen().title("Pull Requests").role("azdo"))?;
 	session.stylesheet(sf, "azdo", Some(CSS))?;
 	let mut app = App::new(org, demo);
-	let mut focused: Option<&str> = None;
+	let mut focused: Option<String> = None;
 	let mut rows_checked = Instant::now();
 	// TERN_AZDO_TRACE=file logs every input, for seeing what Tern sends.
 	let mut trace = std::env::var_os("TERN_AZDO_TRACE").and_then(|p| std::fs::File::create(p).ok());
@@ -2773,9 +3073,9 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 			app.note = format!("could not scroll the file list: {e}");
 		}
 		// After the render, so the composer exists when it takes focus.
-		let want_focus = app.compose.as_ref().map(|c| if matches!(c.kind, ComposeKind::Inline { .. }) { LINE_EDITOR } else { COMPOSER });
+		let want_focus = app.focus_path();
 		if want_focus != focused {
-			session.focus(sf, want_focus)?;
+			session.focus(sf, want_focus.as_deref())?;
 			focused = want_focus;
 		}
 		let wait = Duration::from_millis(if app.busy > 0 { 100 } else { 1000 });
@@ -2809,7 +3109,9 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 				let key = ctrl_from_meta(key);
 				// A note lasts until the next key.
 				app.note.clear();
-				if app.compose.is_some() {
+				if app.pick.is_some() {
+					app.pick_key(&key);
+				} else if app.compose.is_some() {
 					app.compose_key(&key);
 				} else if !app.key(&key) {
 					break;
