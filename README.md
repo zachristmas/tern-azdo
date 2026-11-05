@@ -23,15 +23,23 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 **One navigator for the organization.** A rail of PR cards sits beside the open pull request and never goes away, so any PR is one click from any other. Each card has the whole title, the PR id, author, age, vote counts and your own vote, grouped by project. Four dropdowns across the top filter it everywhere: Show (reviewing, created by me, all active), Project, Status (ready, draft, approved, blocked) and Sort (by project, newest first, oldest first, across every project). `/` or `Ctrl+K` opens a quick switcher that finds any PR by title, author, repo, branch or id, `[` and `]` step to the previous and next PR, and `f` filters by text. On a narrow pane the rail and the PR take turns.
 
+Sort by newest or oldest and the list runs across every project at once. With the project headers gone, each card carries its project (a colored dot) and repo, so you always know where a PR lives.
+
+<p align="center"><img src="docs/nav-date.png" alt="The navigator sorted newest first across projects: every card is labeled with its project and repo" width="900"></p>
+
+<p align="center"><img src="docs/switcher.png" alt="The quick switcher open on a search for tax, matching a pull request in another project" width="900"></p>
+
 **A page per pull request.** A status card says where the PR stands: who approved, who is waiting or rejected, required reviewers still to vote, merge conflicts, and how many comment threads are open. The description renders as Markdown, and reviewers and linked work items sit beside it.
 
-<p align="center"><img src="docs/overview.png" alt="A pull request's overview: the status card, the rendered description, and the reviewers and work items beside it" width="900"></p>
+<p align="center"><img src="docs/overview.png" alt="A pull request's overview: the review status card, the rendered description, reviewers and work items, and the AI menu open from the gear with an editable prompt per kind" width="900"></p>
 
 **The whole conversation, in order.** Under the description, the activity timeline lists everything newest first: votes, pushes, reviewers being added, and every comment thread. Each thread is its own card with the file, its line range, the code it is about and its status (Active, Resolved, Won't fix). Every comment in it shows in full, with the author's name and initials, when they wrote it, whether it was edited, and its Markdown (lists, bold, code). `n` jumps from thread to thread, and `a` replies to the one you are on. Each thread has Explain and Respond with AI buttons (below).
 
 <p align="center"><img src="docs/activity.png" alt="The activity timeline: a comment thread on tax.ts as a card with the code it is about and three comments, each with its author and time" width="900"></p>
 
 **Diffs you can read.** The changed files sit in a folder tree beside a syntax-highlighted diff with real line numbers. Comment threads appear inside the diff, right under the lines they are about, and the tree marks which files have comments. `s` switches between inline and side by side, `x` between changes and the whole file, and the diff scrolls on its own with the vim keys. `n` jumps to the next comment, moving across files. `}` and `{` jump to the next and previous change, like vim, going on to the next file at the end of one; the whole file view opens five lines above its first change. To comment on a line, click its line number: a comment box opens under it, as in Azure DevOps. From the keyboard, `c` asks for the line number (`-12` for a removed line).
+
+<p align="center"><img src="docs/whole.png" alt="The whole file view, opened five lines above its first change" width="900"></p>
 
 <p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files, the diff with a comment thread under the line it is about, and the next and previous change buttons" width="900"></p>
 

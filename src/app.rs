@@ -106,7 +106,7 @@ const CSS: &str = "\
 .rail .rl{padding:6px 8px 2px;color:var(--sf-c-muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;cursor:default}\
 .rpr{padding:5px 8px 6px 16px;border-radius:4px;cursor:pointer;line-height:1.3}.rpr:hover{background:color-mix(in srgb,var(--sf-c-muted) 14%,transparent)}\
 .rpr.cur{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
-.rpr .rt{font-size:14.5px;font-weight:550;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal}\
+.rpj{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--sf-c-muted);white-space:nowrap;overflow:hidden}\n.rpj .pd{width:8px;height:8px;border-radius:50%;flex:none}.rpj .rr{font-weight:400;text-transform:none;letter-spacing:0;opacity:.8}\n.rpr .rt{font-size:14.5px;font-weight:550;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal}\
 .rpr .rm{display:flex;flex-wrap:wrap;align-items:center;gap:1px 8px;margin-top:3px;color:var(--sf-c-muted);font-size:11.5px}\
 .crumb{gap:8px;padding:2px 4px 0}\n.rh{padding-left:22px;color:var(--sf-c-muted);font-size:11.5px;font-weight:600;cursor:default}.rh:hover{background:none}\
 .id{color:var(--sf-c-muted);min-width:46px;font-variant-numeric:tabular-nums}\
@@ -843,10 +843,14 @@ fn initials(name: &str) -> String {
 	[first, last].into_iter().flatten().flat_map(char::to_uppercase).collect()
 }
 
+/// 0 to 5: the same color for the same name everywhere.
+fn name_hue(name: &str) -> u32 {
+	name.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b))) % 6
+}
+
 /// A round badge with someone's initials, the same color for the same name everywhere.
 fn avatar(name: &str) -> html::El<Msg> {
-	let h = name.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)));
-	html::span(initials(name)).class(format!("av av{}", h % 6)).title(name.to_owned())
+	html::span(initials(name)).class(format!("av av{}", name_hue(name))).title(name.to_owned())
 }
 
 fn person(name: &str) -> html::El<Msg> {
@@ -1507,9 +1511,6 @@ impl App {
 			if q.is_draft {
 				meta = meta.child(html::span("draft").class("chip"));
 			}
-			if self.sort != SortMode::Project {
-				meta = meta.child(html::span(name.to_owned()));
-			}
 			meta = meta.child(html::span(short_name(&q.created_by.display_name))).child(html::span(age(&q.creation_date)));
 			let counts = api::vote_counts(q);
 			for (vote, class, glyph) in [(10, "ok", "\u{2713}"), (5, "ok", "\u{2713}~"), (-5, "wait", "\u{23f8}"), (-10, "bad", "\u{2717}")] {
@@ -1521,13 +1522,18 @@ impl App {
 				let (g, class) = vote_glyph(v);
 				meta = meta.child(html::span(format!("you {g}")).class(class));
 			}
-			rail = rail.child(
-				html::div()
-					.class(if Some(id) == cur { "rpr cur" } else { "rpr" })
-					.on_click(Msg::Open(id))
-					.child(html::div().class("rt").child(html::span(q.title.clone())))
-					.child(meta),
-			);
+			let mut card = html::div().class(if Some(id) == cur { "rpr cur" } else { "rpr" }).on_click(Msg::Open(id));
+			// Without the project headers, each card says which project and repo it is in.
+			if self.sort != SortMode::Project {
+				card = card.child(
+					html::div()
+						.class("rpj")
+						.child(html::span("").class(format!("pd av{}", name_hue(name))))
+						.child(html::span(name.to_owned()))
+						.child(html::span(format!("/ {}", q.repository.name)).class("rr")),
+				);
+			}
+			rail = rail.child(card.child(html::div().class("rt").child(html::span(q.title.clone()))).child(meta));
 		}
 		rail
 	}
