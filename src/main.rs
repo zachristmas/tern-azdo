@@ -6,6 +6,7 @@
 mod api;
 mod app;
 mod auth;
+mod cli;
 mod clip;
 mod config;
 mod demo;
@@ -75,6 +76,12 @@ fn main() -> anyhow::Result<()> {
 			println!("{org}");
 			Ok(())
 		},
+		["mcp"] => cli::serve(),
+		["prompts" | "repos", ..] | ["repo", ..] => {
+			let words: Vec<&str> = args.iter().map(String::as_str).collect();
+			println!("{}", cli::command(&words)?);
+			Ok(())
+		},
 		["pat", "--forget"] => {
 			auth::forget_pat(&org_or_bail()?)?;
 			println!("forgot the saved token; tern-azdo will use `az` again");
@@ -94,7 +101,7 @@ fn main() -> anyhow::Result<()> {
 			Ok(())
 		},
 		_ => {
-			eprintln!("usage: tern-azdo [--demo | list [review|mine|all] | org [ORG] | pat [--forget]]");
+			eprintln!("usage: tern-azdo [--demo | list [review|mine|all] | org [ORG] | prompts | repos | repo ... | mcp | pat [--forget]]");
 			std::process::exit(2);
 		},
 	}

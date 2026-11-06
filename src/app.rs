@@ -1454,7 +1454,7 @@ impl App {
 		let sort_items: Vec<_> = SortMode::ALL.iter().map(|m| (m.label().to_owned(), None, *m == self.sort, Msg::Sort(m.id().to_owned()))).collect();
 		html::div()
 			.class("topbar")
-			.child(html::div().class("ddb").title("Hide the sidebar").on_click(Msg::RailToggle).child(html::span("\u{25e7}")))
+			.child(self.rail_toggle())
 			.child(dd(Menu::Show, "Show", format!("{} ({tab_n})", self.tab.label()), show_items))
 			.child(dd(Menu::Project, "Project", self.project.clone().unwrap_or_else(|| "All projects".to_owned()), project_items))
 			.child(dd(Menu::Status, "Status", self.status.label().to_owned(), status_items))

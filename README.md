@@ -109,9 +109,28 @@ tern-azdo --demo                  the interactive view on made-up data
 tern-azdo list [review|mine|all]  active pull requests as a table
 tern-azdo org [ORG]               show or set the organization
 tern-azdo pat [--forget]          save (from stdin) or remove a personal access token
+tern-azdo prompts                 the prompt kinds, default templates and variables, as JSON
+tern-azdo repos                   every repo with saved AI settings
+tern-azdo repo show KEY           one repo's folder, agent and effective prompts
+tern-azdo repo set KEY [--dir D] [--agent A]
+tern-azdo repo prompt KEY KIND [--text T | --stdin | --reset]   print, set or reset one template
+tern-azdo repo remove KEY         back to defaults
+tern-azdo mcp                     the same operations as an MCP server on stdio
 ```
 
 Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts and other terminals.
+
+### Configuring the AI actions from an agent
+
+`KEY` is `project/repo`, case-insensitive. The `repo` commands print JSON, and `repo set` and `repo prompt` warn about template variables that do not exist and folders that are missing. A template equal to the default is not saved, so defaults can still improve. The plugin reads the config each time an AI action opens, so changes apply without a restart.
+
+To give an agent the same operations as tools, add the server to its MCP config:
+
+```json
+{ "mcpServers": { "tern-azdo": { "command": "tern-azdo", "args": ["mcp"] } } }
+```
+
+The tools are `azdo_ai_info` (read this first), `azdo_ai_repos`, `azdo_ai_repo_get`, `azdo_ai_repo_set` and `azdo_ai_repo_remove`.
 
 ## Keys
 

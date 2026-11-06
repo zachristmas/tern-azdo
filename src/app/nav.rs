@@ -139,7 +139,12 @@ impl App {
 	/// button when the pane is wide enough for it.
 	pub(super) fn nav_bar(&self) -> html::El<Msg> {
 		let n = self.visible().len();
-		let mut bar = html::div().class("topbar nbar").child(
+		let mut bar = html::div().class("topbar nbar");
+		// The same button, in the same place, as the one on the rail's top bar.
+		if self.cols >= RAIL_MIN_COLS {
+			bar = bar.child(self.rail_toggle());
+		}
+		bar = bar.child(
 			html::div()
 				.class("ddb")
 				.title("Choose a pull request (Ctrl+K)")
@@ -152,10 +157,13 @@ impl App {
 				.child(html::div().class("ddb").title("Previous pull request in this project ([)").on_click(Msg::StepPr(false)).child(html::span("\u{2039}")))
 				.child(html::div().class("ddb").title("Next pull request in this project (])").on_click(Msg::StepPr(true)).child(html::span("\u{203a}")));
 		}
-		if self.cols >= RAIL_MIN_COLS {
-			bar = bar.child(html::div().class("ddb").title("Show the sidebar").on_click(Msg::RailToggle).child(html::span("Show sidebar")));
-		}
 		bar
+	}
+
+	/// The one button that hides and shows the sidebar: first on the bar, whichever bar is up.
+	pub(super) fn rail_toggle(&self) -> html::El<Msg> {
+		let title = if self.rail_shown() { "Hide the sidebar" } else { "Show the sidebar" };
+		html::div().class("ddb").title(title).on_click(Msg::RailToggle).child(html::span("\u{25e7}"))
 	}
 
 	/// Open the picker on the open PR.
