@@ -1260,7 +1260,8 @@ impl App {
 		let Some(p) = &self.page else { return };
 		let Some(c) = p.detail.as_ref().and_then(|d| d.changes.get(i)) else { return };
 		let path = c.path().to_owned();
-		if p.files.contains_key(&path) {
+		// A file that failed to load is asked for again when it is picked again.
+		if p.files.get(&path).is_some_and(|f| !matches!(f, FileState::Failed(_))) {
 			return;
 		}
 		let (base, head) = c.blobs();

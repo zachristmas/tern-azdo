@@ -410,7 +410,7 @@ impl Client {
 	}
 
 	fn call(&self, method: &str, url: &str, body: Option<&Value>) -> anyhow::Result<ureq::Response> {
-		for attempt in 0..2 {
+		for attempt in 0..3u64 {
 			let req = self.agent.request(method, url).set("Authorization", &self.auth.header()?).set("Accept", "application/json");
 			let res = match body {
 				Some(b) => req.send_json(b.clone()),
@@ -429,6 +429,10 @@ impl Client {
 						bail!("Azure DevOps refused the sign-in (401). Run `az login`, or check the saved PAT. {msg}");
 					}
 					bail!("{method} failed with {code}: {msg}");
+				},
+				// A dropped connection is asked again (not for POST, which could then post twice).
+				Err(ureq::Error::Transport(t)) if attempt < 2 && method != "POST" && matches!(t.kind(), ureq::ErrorKind::Io | ureq::ErrorKind::ConnectionFailed) => {
+					std::thread::sleep(Duration::from_millis(300 * (attempt + 1)));
 				},
 				Err(e) => return Err(e).with_context(|| format!("{method} {}", url.split('?').next().unwrap_or(url))),
 			}
@@ -537,9 +541,17 @@ impl Client {
 	/// A file's text by blob id; `None` when it is binary or too big to diff.
 	pub fn blob(&self, pr: &Pr, object_id: &str) -> anyhow::Result<Option<String>> {
 		let url = format!("{}/blobs/{object_id}?$format=octetstream&{API}", self.repo_url(pr));
-		let res = self.call("GET", &url, None)?;
+		// The connection can also drop while the body is coming; that is asked again too.
 		let mut bytes = Vec::new();
-		std::io::Read::read_to_end(&mut std::io::Read::take(res.into_reader(), MAX_BLOB as u64 + 1), &mut bytes)?;
+		for attempt in 0..3u64 {
+			let res = self.call("GET", &url, None)?;
+			bytes.clear();
+			match std::io::Read::read_to_end(&mut std::io::Read::take(res.into_reader(), MAX_BLOB as u64 + 1), &mut bytes) {
+				Ok(_) => break,
+				Err(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(300 * (attempt + 1))),
+				Err(e) => return Err(e).context("reading the file"),
+			}
+		}
 		if bytes.len() > MAX_BLOB || bytes.iter().take(8000).any(|b| *b == 0) {
 			return Ok(None);
 		}
