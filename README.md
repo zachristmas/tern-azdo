@@ -50,6 +50,8 @@ Sort by newest or oldest and the list runs across every project at once. With th
 
 <p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files, the diff with a comment thread under the line it is about, and the next and previous change buttons" width="900"></p>
 
+**Sizes you set once.** The Aa button above the file tree sets the diff's text size, the tree's text size and the tree's width, one step at a time (or `+` `-` and `< >` on the Files tab). They are saved in `config.json` and kept across restarts, and Reset sizes puts the defaults back.
+
 **Filter the files, select some, review just those.** The filter box above the tree takes comma-separated terms: a plain term matches loosely like a fuzzy finder (`ordrvw`), `*.config` or `src/**/Tax*` is a glob, `/\.vue$/` is a regex (commas allowed inside), and a leading `!` leaves out what matches. Tick the boxes beside files and folders (or press Space on a file, Ctrl+A for everything shown) and Review selected and Add selected as context appear above the tree. They go through the same confirmation and templates as the rest, with `{selected}` and `{selected_count}` available.
 
 <p align="center"><img src="docs/tree-select.png" alt="The file tree with three files and a folder ticked, Review selected and Add selected as context buttons above it, and a comment thread open on the diff" width="900"></p>
@@ -182,6 +184,7 @@ The running view reads commands from a file beside `config.json` about once a se
 | `Space` / `Ctrl+A` | Files: select the file / every shown file (`Esc` unselects) |
 | `F` | Files: filter the tree |
 | `R` / `T` | AI review / add the selected files as context |
+| `+` `-` / `<` `>` | Files: diff text bigger / smaller, file tree wider / narrower |
 | `s` | Inline or side by side |
 | `x` | Whole file or changes |
 | `v` then `1` `2` `3` `4` `0` | Approve, with suggestions, wait, reject, reset |

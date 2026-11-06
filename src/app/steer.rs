@@ -6,7 +6,9 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 use tern_sdk::ui::{self, html};
 
-use super::{AiReq, App, ComposeKind, Composer, FILES_DS, JUMP_LEAD, Msg, OV_MAIN, Page, PrTab, ScrollReq, api, filter, remote, review, tree};
+use crate::config;
+
+use super::{AiReq, App, ComposeKind, SizeKind, Composer, FILES_DS, JUMP_LEAD, Msg, OV_MAIN, Page, PrTab, ScrollReq, api, filter, remote, review, tree};
 
 impl Page {
 	/// A path as the filter and the commands see it: no leading slash.
@@ -65,7 +67,8 @@ impl App {
 			html::div()
 				.class("tsel")
 				.child(html::span(mark).class("ck").title("Select or unselect every shown file (Ctrl+A)").on_click(Msg::CheckAll))
-				.child(html::span(label).on_click(Msg::CheckAll)),
+				.child(html::span(label).on_click(Msg::CheckAll))
+				.child(self.size_menu()),
 		);
 		if n > 0 {
 			let (r, c) = (review::Kind::ReviewFiles, review::Kind::ContextFiles);
@@ -78,6 +81,61 @@ impl App {
 			);
 		}
 		head
+	}
+
+	/// The Aa button over the diff and the menu of sizes it opens.
+	pub(super) fn size_menu(&self) -> html::El<Msg> {
+		let mut d = html::div().class("dd vmd").child(
+			html::span("Aa").class(if self.view_menu { "rvg on" } else { "rvg" }).title("Sizes: code, text, file tree. Keys: + - code, < > tree").on_click(Msg::ViewMenu),
+		);
+		if self.view_menu {
+			let row = |label: &str, value: String, k: SizeKind| {
+				html::div()
+					.class("ddi")
+					.child(html::span(label.to_owned()).class("vl"))
+					.child(html::span("\u{2212}").class("stp").on_click(Msg::Size(k, -1)))
+					.child(html::span(value).class("n"))
+					.child(html::span("+").class("stp").on_click(Msg::Size(k, 1)))
+			};
+			d = d.child(
+				html::div()
+					.class("ddm")
+					.child(row("Diff text", format!("{:.1}", self.ui.code), SizeKind::Code))
+					.child(row("Tree and header text", format!("{:.1}", self.ui.text), SizeKind::Text))
+					.child(row("File tree width", format!("{:.0}", self.ui.tree), SizeKind::Tree))
+					.child(html::div().class("ddi").on_click(Msg::SizeReset).child(html::span("Reset sizes"))),
+			);
+		}
+		d
+	}
+
+	/// The stylesheet for the sizes, laid over the base one.
+	pub(super) fn ui_css(u: &config::Ui) -> String {
+		format!(
+			".azfv{{font-size:{t}px}}.aztw{{width:{w}px;min-width:0;max-width:65%}}.aztr{{height:{h}px}}.azds{{font-size:{c}px}}",
+			t = u.text,
+			w = u.tree,
+			h = (u.text * 2.0).round(),
+			c = u.code,
+		)
+	}
+
+	/// One step bigger or smaller, saved.
+	pub(super) fn resize(&mut self, which: SizeKind, dir: i8) {
+		let d = f32::from(dir);
+		match which {
+			SizeKind::Code => self.ui.code = (self.ui.code + 0.5 * d).clamp(8.0, 22.0),
+			SizeKind::Text => self.ui.text = (self.ui.text + 0.5 * d).clamp(9.0, 20.0),
+			SizeKind::Tree => self.ui.tree = (self.ui.tree + 20.0 * d).clamp(160.0, 720.0),
+		}
+		self.ui_changed();
+	}
+
+	pub(super) fn ui_changed(&mut self) {
+		self.sheet_dirty = true;
+		if let Err(e) = config::save_ui(self.ui) {
+			self.note = format!("could not save the sizes: {e}");
+		}
 	}
 
 	/// Open the AI modal for the selected files.

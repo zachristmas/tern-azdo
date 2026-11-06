@@ -5,6 +5,21 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Sizes in the Files tab, in CSS pixels: the diff's text, the tree's and headers' text, and the tree's width.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Ui {
+	pub code: f32,
+	pub text: f32,
+	pub tree: f32,
+}
+
+impl Default for Ui {
+	fn default() -> Self {
+		Self { code: 12.0, text: 12.9, tree: 300.0 }
+	}
+}
+
 /// What `config.json` holds. No secrets.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Config {
@@ -14,6 +29,13 @@ pub struct Config {
 	/// "Review with AI" settings per repo, keyed `project/repo` in lower case.
 	#[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
 	pub repos: std::collections::BTreeMap<String, Review>,
+	/// Sizes the user set; left out while they are the defaults.
+	#[serde(default, skip_serializing_if = "is_default_ui")]
+	pub ui:    Ui,
+}
+
+fn is_default_ui(u: &Ui) -> bool {
+	*u == Ui::default()
 }
 
 /// How "Review with AI" runs for one repo.
@@ -42,6 +64,18 @@ pub fn review(key: &str) -> Option<Review> {
 pub fn save_review(key: &str, review: Review) -> anyhow::Result<()> {
 	let mut config = load().unwrap_or_default();
 	config.repos.insert(key.to_owned(), review);
+	save(&config)
+}
+
+/// The saved sizes, else the defaults.
+pub fn ui() -> Ui {
+	load().map(|c| c.ui).unwrap_or_default()
+}
+
+/// Save the sizes, keeping the rest of the config.
+pub fn save_ui(ui: Ui) -> anyhow::Result<()> {
+	let mut config = load().unwrap_or_default();
+	config.ui = ui;
 	save(&config)
 }
 

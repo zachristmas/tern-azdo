@@ -224,6 +224,7 @@ const CSS: &str = "\
 .azbtn.pri{background:var(--sf-c-accent);border-color:var(--sf-c-accent);color:#fff}\
 .aztog{display:flex;flex-shrink:0;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);border-radius:6px;overflow:hidden}\
 .aztog span{padding:2px 10px;cursor:pointer;color:var(--sf-c-muted)}\
+.vmd{align-self:center;margin-left:auto}.vmd .ddm{left:auto;right:0;min-width:260px}.vmd .ddi .vl{margin-right:auto}.vmd .ddi .n{margin-left:0;min-width:46px;text-align:center}.stp{padding:0 9px;border-radius:4px;color:var(--sf-c-accent);font-weight:700;cursor:pointer}.stp:hover{background:color-mix(in srgb,var(--sf-c-muted) 22%,transparent)}\
 .aztog span.on{background:color-mix(in srgb,var(--sf-c-accent) 22%,transparent);color:var(--sf-c-accent)}\
 .strip{height:100%;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;padding-top:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45}";
 
@@ -276,6 +277,12 @@ enum Msg {
 	Fold(String),
 	/// Hide or show the rail.
 	RailToggle,
+	/// The sizes menu: open or close.
+	ViewMenu,
+	/// A size, one step smaller (-1) or bigger (1).
+	Size(SizeKind, i8),
+	/// Sizes back to the defaults.
+	SizeReset,
 	/// The file tree: check or uncheck a file (its place in the change list).
 	Check(usize),
 	/// The file tree: check or uncheck every shown file in a folder.
@@ -735,6 +742,11 @@ struct App {
 	folded: HashSet<String>,
 	/// The rail is hidden, on a pane wide enough to show it.
 	rail_hidden: bool,
+	/// Sizes of the Files tab (saved), and whether the menu for them is open.
+	ui: config::Ui,
+	view_menu: bool,
+	/// The sizes changed: the surface needs its stylesheet again.
+	sheet_dirty: bool,
 	/// The last command from outside (`tern-azdo files ...`, MCP) that was acted on, and the state last written for it.
 	steer_applied: u64,
 	steer_last: String,
@@ -787,6 +799,17 @@ enum ScrollReq {
 const OV_MAIN: &str = "main.pbody.ov.ovm";
 const OV_FIRST: &str = "main.pbody.ov.ovm.status";
 /// The Files tab's file tree, its diff's scroll container, and the node at the diff's top.
+/// A size in the sizes menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SizeKind {
+	/// The diff's text.
+	Code,
+	/// The tree's and the headers' text.
+	Text,
+	/// The tree's width.
+	Tree,
+}
+
 const TREE: &str = "main.pbody.fv.tw.tree";
 /// The file tree's filter box while it is being typed in.
 const TREE_FILTER: &str = "main.pbody.fv.tw.th.tfed";
@@ -1050,6 +1073,9 @@ impl App {
 			nav: None,
 			folded: HashSet::new(),
 			rail_hidden: false,
+			ui: config::ui(),
+			view_menu: false,
+			sheet_dirty: false,
 			steer_applied: 0,
 			steer_last: String::new(),
 			steer_wait: None,
@@ -2385,8 +2411,9 @@ impl App {
 
 	/// A key with nothing else taking it. False to quit.
 	fn key(&mut self, key: &Key) -> bool {
-		if (self.menu.is_some() || self.rv_menu) && key.is("escape") {
+		if (self.menu.is_some() || self.rv_menu || self.view_menu) && key.is("escape") {
 			self.menu = None;
+			self.view_menu = false;
 			self.rv_menu = false;
 			return true;
 		}
@@ -2574,6 +2601,10 @@ impl App {
 			"s" if files => p.split = !p.split,
 			"down" | "j" => self.scroll(1),
 			"up" | "k" => self.scroll(-1),
+			"+" | "=" if files => self.resize(SizeKind::Code, 1),
+			"-" if files => self.resize(SizeKind::Code, -1),
+			">" if files => self.resize(SizeKind::Tree, 1),
+			"<" if files => self.resize(SizeKind::Tree, -1),
 			"space" if files => {
 				let i = p.file;
 				self.check_file(i);
@@ -2735,6 +2766,16 @@ impl App {
 			},
 			Msg::FilesFilter => self.open_files_filter(),
 			Msg::FilesFilterClear => self.set_files_filter(""),
+			Msg::ViewMenu => {
+				self.view_menu = !self.view_menu;
+				self.menu = None;
+				self.rv_menu = false;
+			},
+			Msg::Size(which, dir) => self.resize(which, dir),
+			Msg::SizeReset => {
+				self.ui = config::Ui::default();
+				self.ui_changed();
+			},
 			Msg::RailToggle => {
 				self.rail_hidden = !self.rail_hidden;
 				self.menu = None;
@@ -2785,12 +2826,16 @@ pub fn run(org: Option<String>, demo: bool) -> anyhow::Result<()> {
 	};
 	let sf = session.open(SurfaceOptions::screen().title("Pull Requests").role("azdo"))?;
 	session.stylesheet(sf, "azdo", Some(CSS))?;
+	session.stylesheet(sf, "azdo-ui", Some(&App::ui_css(&config::ui())))?;
 	let mut app = App::new(org, demo);
 	let mut focused: Option<String> = None;
 	let mut rows_checked = Instant::now();
 	// TERN_AZDO_TRACE=file logs every input, for seeing what Tern sends.
 	let mut trace = std::env::var_os("TERN_AZDO_TRACE").and_then(|p| std::fs::File::create(p).ok());
 	loop {
+		if std::mem::take(&mut app.sheet_dirty) {
+				session.stylesheet(sf, "azdo-ui", Some(&App::ui_css(&app.ui)))?;
+			}
 		session.render(sf, app.view())?;
 		if let Some(req) = app.scroll_req.take()
 			&& let Some(anchor) = app.scroll_anchor()
