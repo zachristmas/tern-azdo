@@ -225,7 +225,7 @@ const CSS: &str = "\
 .azbtn.pri{background:var(--sf-c-accent);border-color:var(--sf-c-accent);color:#fff}\
 .aztog{display:flex;flex-shrink:0;border:1px solid color-mix(in srgb,var(--sf-c-muted) 45%,transparent);border-radius:6px;overflow:hidden}\
 .aztog span{padding:2px 10px;cursor:pointer;color:var(--sf-c-muted)}\
-.vmd{align-self:center;margin-left:auto}.vmd .ddm{left:auto;right:0;min-width:260px}.vmd .ddi .vl{margin-right:auto}.vmd .ddi .n{margin-left:0;min-width:46px;text-align:center}.stp{padding:0 9px;border-radius:4px;color:var(--sf-c-accent);font-weight:700;cursor:pointer}.stp:hover{background:color-mix(in srgb,var(--sf-c-muted) 22%,transparent)}\
+.azth{position:relative}.vmd{position:static;align-self:center;margin-left:auto}.vmd .ddm{left:0;right:0;min-width:0}.vmd .ddi{gap:8px}.vmd .ddi .vl{margin-right:auto}.vmd .ddi .n{margin-left:0;min-width:46px;text-align:center}.stp{padding:0 9px;border-radius:4px;color:var(--sf-c-accent);font-weight:700;cursor:pointer}.stp:hover{background:color-mix(in srgb,var(--sf-c-muted) 22%,transparent)}\
 .aztog span.on{background:color-mix(in srgb,var(--sf-c-accent) 22%,transparent);color:var(--sf-c-accent)}\
 .strip{height:100%;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;padding-top:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px;line-height:1.45}";
 

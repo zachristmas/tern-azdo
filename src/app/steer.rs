@@ -106,8 +106,8 @@ impl App {
 				html::div()
 					.class("ddm")
 					.child(row("Diff text", format!("{:.1}", self.ui.code), SizeKind::Code))
-					.child(row("Tree and header text", format!("{:.1}", self.ui.text), SizeKind::Text))
-					.child(row("File tree width", format!("{:.0}", self.ui.tree), SizeKind::Tree))
+					.child(row("Tree text", format!("{:.1}", self.ui.text), SizeKind::Text))
+					.child(row("Tree width", format!("{:.0}", self.ui.tree), SizeKind::Tree))
 					.child(html::div().class("ddi").on_click(Msg::SizeReset).child(html::span("Reset sizes"))),
 			);
 		}
@@ -117,11 +117,14 @@ impl App {
 	/// The stylesheet for the sizes, laid over the base one.
 	pub(super) fn ui_css(u: &config::Ui) -> String {
 		format!(
-			".azfv{{font-size:{t}px}}.aztw{{width:{w}px;min-width:0;max-width:65%}}.aztr{{height:{h}px}}.azds{{font-size:{c}px}}",
+			// Tern's code widget sets its own font size and line height, so they are set on it; the gutters beside it follow the same height.
+			".azfv{{font-size:{t}px}}.aztw{{width:{w}px;min-width:200px;max-width:65%}}.aztr{{height:{h}px}}\
+			 .azds .sf-code{{font-size:{c}px}}.azds .sf-ln{{height:{l}px;line-height:{l}px}}.azgl{{height:{l}px;line-height:{l}px}}",
 			t = u.text,
 			w = u.tree,
 			h = (u.text * 2.0).round(),
 			c = u.code,
+			l = (u.code * 1.5).round(),
 		)
 	}
 
@@ -131,7 +134,7 @@ impl App {
 		match which {
 			SizeKind::Code => self.ui.code = (self.ui.code + 0.5 * d).clamp(8.0, 22.0),
 			SizeKind::Text => self.ui.text = (self.ui.text + 0.5 * d).clamp(9.0, 20.0),
-			SizeKind::Tree => self.ui.tree = (self.ui.tree + 20.0 * d).clamp(160.0, 720.0),
+			SizeKind::Tree => self.ui.tree = (self.ui.tree + 20.0 * d).clamp(200.0, 720.0),
 		}
 		self.ui_changed();
 	}
