@@ -226,6 +226,30 @@ pub fn render(prompt: &str, v: &Vars) -> String {
 	out
 }
 
+/// The longest prompt (in characters) that goes on a command line. Windows stops at about 32,000 for the whole line.
+pub const MAX_ARG: usize = 20_000;
+
+/// What to hand the agent for `prompt`: the prompt itself, or when it is too long for a command line a short one that points
+/// at a file holding it. The second value says it was filed.
+pub fn for_launch(prompt: &str, tag: &str) -> anyhow::Result<(String, bool)> {
+	if prompt.chars().count() <= MAX_ARG {
+		return Ok((prompt.to_owned(), false));
+	}
+	let dir = std::env::temp_dir().join("tern-azdo");
+	std::fs::create_dir_all(&dir)?;
+	// Files of earlier runs go after two days.
+	let old = std::time::Duration::from_secs(2 * 24 * 3600);
+	for e in std::fs::read_dir(&dir)?.flatten() {
+		if e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > old) {
+			let _ = std::fs::remove_file(e.path());
+		}
+	}
+	let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+	let path = dir.join(format!("prompt-{tag}-{secs}.md"));
+	std::fs::write(&path, prompt)?;
+	Ok((format!("Your full instructions are in {}. Read that whole file first, then follow it exactly as if it were this message.", path.display()), true))
+}
+
 /// The program and arguments for an agent setting: a command line split on spaces, with `{prompt}` replaced by the
 /// prompt (one argument) or the prompt appended. `claude` and `codex` take the prompt as their first argument.
 pub fn argv(agent: &str, prompt: &str) -> Vec<String> {
@@ -363,6 +387,18 @@ mod tests {
 		assert!(fuzzy("rgdl", "ledger").is_none());
 		assert!(fuzzy("led", "ledger") > fuzzy("led", "a-l-e-d"));
 		assert!(fuzzy("LED", "Ledger").is_some());
+	}
+
+	#[test]
+	fn a_long_prompt_goes_in_a_file() {
+		let (short, filed) = for_launch("hi", "t").unwrap();
+		assert!(!filed && short == "hi");
+		let long = "x".repeat(MAX_ARG + 1);
+		let (arg, filed) = for_launch(&long, "test").unwrap();
+		assert!(filed && arg.len() < 300);
+		let path = arg.split("instructions are in ").nth(1).and_then(|r| r.split(". Read").next()).unwrap();
+		assert_eq!(std::fs::read_to_string(path).unwrap().len(), long.len());
+		let _ = std::fs::remove_file(path);
 	}
 
 	#[test]

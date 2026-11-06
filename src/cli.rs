@@ -92,9 +92,18 @@ pub fn set(args: &Value) -> anyhow::Result<Value> {
 	if r.agent.is_empty() {
 		r.agent = review::DEFAULT_AGENT.to_owned();
 	}
-	if let Some(prompts) = args.get("prompts") {
-		let prompts = prompts.as_object().context("`prompts` must map a kind to a template")?;
-		for (id, template) in prompts {
+	// Templates can come from a JSON file (kind to template), so none of their text goes through a shell; `prompts` wins over it.
+	let mut prompts = serde_json::Map::new();
+	if let Some(path) = text(args, "prompts_file") {
+		let body = std::fs::read_to_string(path).with_context(|| format!("could not read {path}"))?;
+		let file: Value = serde_json::from_str(&body).with_context(|| format!("{path} is not JSON"))?;
+		prompts.extend(file.as_object().context("the prompts file must be a JSON object of kind to template")?.clone());
+	}
+	if let Some(given) = args.get("prompts") {
+		prompts.extend(given.as_object().context("`prompts` must map a kind to a template")?.clone());
+	}
+	{
+		for (id, template) in &prompts {
 			let kind = kind_of(id)?;
 			let template = template.as_str().context("a template must be a string")?;
 			let unknown = unknown_variables(template);
@@ -239,9 +248,9 @@ pub fn command(args: &[&str]) -> anyhow::Result<String> {
 		["repo", "remove", key] => Ok(pretty(remove(&json!({ "repo": key }))?)),
 		["repo", "set", key, ..] => {
 			let mut a = json!({ "repo": key });
-			for name in ["dir", "agent"] {
+			for (name, key) in [("dir", "dir"), ("agent", "agent"), ("prompts-file", "prompts_file")] {
 				if let Some(v) = flag(&format!("--{name}")) {
-					a[name] = json!(v);
+					a[key] = json!(v);
 				}
 			}
 			Ok(pretty(set(&a)?))
@@ -330,7 +339,8 @@ const TOOLS: [Tool; 13] = [
 				"repo": { "type": "string", "description": "project/repo" },
 				"dir": { "type": "string", "description": "local checkout folder" },
 				"agent": { "type": "string", "description": "claude, codex, or a command line with an optional {prompt}" },
-				"prompts": { "type": "object", "description": "kind (see azdo_ai_info) to template", "additionalProperties": { "type": "string" } }
+				"prompts": { "type": "object", "description": "kind (see azdo_ai_info) to template", "additionalProperties": { "type": "string" } },
+				"prompts_file": { "type": "string", "description": "path to a JSON file of kind to template; use it for long templates or ones with | < > or quotes, so none of the text goes through a shell" }
 			}, "required": ["repo"] })
 		},
 		set,

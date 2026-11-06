@@ -378,11 +378,18 @@ impl App {
 		}
 		let Some(vars) = self.review_vars(req.thread, req.line.as_ref()) else { return };
 		let prompt = review::render(&m.template(), &vars);
-		let result = review::launch(m.settings.dir.trim(), &review::argv(&m.settings.agent, &prompt));
+		let (arg, filed) = match review::for_launch(&prompt, req.kind.id()) {
+			Ok(r) => r,
+			Err(e) => {
+				self.note = format!("could not write the long prompt to a file: {e}");
+				return;
+			},
+		};
+		let result = review::launch(m.settings.dir.trim(), &review::argv(&m.settings.agent, &arg));
 		match result {
 			Ok(msg) => {
 				self.ai_run.insert(run_key(req.kind, req.thread), Instant::now());
-				self.note = msg;
+				self.note = if filed { format!("{msg} (the prompt is long, so it went in a file)") } else { msg };
 				self.ai = None;
 			},
 			Err(e) => self.note = format!("AI request failed: {e}"),
@@ -503,6 +510,9 @@ impl App {
 		match m.section {
 			Section::Preview => {
 				body = body.child(html::div().class("apt").child(html::span(if m.req.is_some() { "The agent will be told:" } else { "A prompt, filled in for this pull request:" })));
+				if m.req.is_some() && preview.chars().count() > review::MAX_ARG {
+					body = body.child(html::div().class("dim aph").child(html::span(format!("{} characters: too long for a command line, so the agent is given this in a file and told to read it. Copy prompt still copies all of it.", preview.chars().count()))));
+				}
 				body = body.child(html::div().class("pvx big").child(html::span(preview)));
 				foot = foot.child(html::span("Enter starts \u{b7} C copies the prompt \u{b7} E template \u{b7} F folder \u{b7} A agent \u{b7} Esc closes").class("dim")).child(btn("Cancel", false, Msg::AiClose));
 				foot = if m.req.is_some() { foot.child(btn("Copy prompt", false, Msg::AiCopy)).child(btn("Start agent", true, Msg::AiStart)) } else { foot.child(btn("Done", true, Msg::AiClose)) };

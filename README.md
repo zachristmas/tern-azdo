@@ -135,6 +135,8 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 
 `KEY` is `project/repo`, case-insensitive. The `repo` commands print JSON, and `repo set` and `repo prompt` warn about template variables that do not exist and folders that are missing. A template equal to the default is not saved, so defaults can still improve. The plugin reads the config each time an AI action opens, so changes apply without a restart.
 
+Everything is saved in `config.json` (`%APPDATA%	ern-azdo` on Windows, `~/.config/tern-azdo` elsewhere), next to nothing else of Tern's. For long templates, or ones with `|`, `<`, `>` or quotes that a shell would mangle, pass `prompts_file` to `azdo_ai_repo_set` (or `--prompts-file` to `repo set`): a JSON file of kind to template. A prompt over 20,000 characters (a big PR with long threads) would not fit a Windows command line, so the agent is started with a short message that points at a file in the temp folder holding it, and the confirmation says so.
+
 To give an agent the same operations as tools, add the server to its MCP config:
 
 ```json
