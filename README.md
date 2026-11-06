@@ -125,6 +125,7 @@ tern-azdo repo prompt KEY KIND [--text T | --stdin | --reset]   print, set or re
 tern-azdo repo remove KEY         back to defaults
 tern-azdo view [--prs W] [--threads W] [--files]   where you are, and what an agent could take you to
 tern-azdo go [--pr N] [--tab overview|files] [--filter F] [--file F] [--line N] [--thread ID]
+tern-azdo refresh [same fields as go]   reload the PR and the list, then go there
 tern-azdo files [filter TEXT | select [TEXT] [--mode add|remove|set] | clear]
 tern-azdo search TEXT             open the picker with TEXT typed in
 tern-azdo dismiss                 close the picker and dialogs
@@ -149,7 +150,7 @@ The settings tools are `azdo_ai_info` (read this first), `azdo_ai_repos`, `azdo_
 
 ### Driving the view from an agent
 
-The running view reads commands from a file beside `config.json` about once a second and writes what it shows to `state.json`, so the CLI and MCP tools act on the view in front of you and report where it ended up. Start with `azdo_view`: it says which PR, tab, file and comment you are on, and with `prs`, `threads` or `files` set (to words, or true) it lists what could be opened, so an agent can match a loose request to a PR number, a comment id or a file path. Then `azdo_go` takes you there, in any mix: `pr`, `tab`, `filter`, `file` (a path or words it matches), `line`, `thread` (shown on the diff, or in the overview with `view: "overview"`). `azdo_files_filter` and `azdo_files_select` change the tree's filter and selection, `azdo_search` opens the picker with words typed in, and `azdo_dismiss` closes it. The filter syntax is the one in the box: `*.config, /^src\/Checkout/, !tests`. Opening a PR loads its files a moment later; `azdo_go` waits for them.
+The running view reads commands from a file beside `config.json` about once a second and writes what it shows to `state.json`, so the CLI and MCP tools act on the view in front of you and report where it ended up. Start with `azdo_view`: it says which PR, tab, file and comment you are on, and with `prs`, `threads` or `files` set (to words, or true) it lists what could be opened, so an agent can match a loose request to a PR number, a comment id or a file path. Then `azdo_go` takes you there, in any mix: `pr`, `tab`, `filter`, `file` (a path or words it matches), `line`, `thread` (shown on the diff, or in the overview with `view: "overview"`). `azdo_files_filter` and `azdo_files_select` change the tree's filter and selection, `azdo_refresh` reloads the open PR (new commits, files, comments) and then takes you to a file, line or comment, so an agent that just pushed a fix can show it to you on the diff; `azdo_search` opens the picker with words typed in, and `azdo_dismiss` closes it. The filter syntax is the one in the box: `*.config, /^src\/Checkout/, !tests`. Opening a PR loads its files a moment later; `azdo_go` waits for them.
 
 ## Keys
 

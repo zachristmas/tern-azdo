@@ -205,7 +205,17 @@ pub fn view(args: &Value) -> anyhow::Result<Value> {
 /// words the path matches), a `line` of it, or a comment `thread` (`view`: overview to show it in the overview instead of on the
 /// diff). Any mix; they apply in that order. Returns where the view ended up.
 pub fn go(args: &Value) -> anyhow::Result<Value> {
-	let mut cmd = json!({ "cmd": "go" });
+	navigate("go", args)
+}
+
+/// Reload the pull request on screen and the list (new commits, new comments), then go where `azdo_go` would, once the
+/// new data is in. Use it after the code or the comments changed.
+pub fn refresh(args: &Value) -> anyhow::Result<Value> {
+	navigate("refresh", args)
+}
+
+fn navigate(command: &str, args: &Value) -> anyhow::Result<Value> {
+	let mut cmd = json!({ "cmd": command });
 	for name in ["pr", "tab", "filter", "file", "line", "thread", "view"] {
 		if let Some(v) = args.get(name).filter(|v| !v.is_null()) {
 			cmd[name] = v.clone();
@@ -305,7 +315,7 @@ pub fn command(args: &[&str]) -> anyhow::Result<String> {
 		["search", rest @ ..] => Ok(pretty(search(&json!({ "text": rest.join(" ") }))?)),
 		["dismiss"] => Ok(pretty(dismiss(&json!({}))?)),
 		// `go [--pr N] [--tab overview|files] [--filter F] [--file F] [--line N] [--thread ID] [--view overview]`
-		["go", ..] => {
+		["go" | "refresh", ..] => {
 			let mut a = json!({});
 			for name in ["pr", "line", "thread"] {
 				if let Some(v) = flag(&format!("--{name}")) {
@@ -317,17 +327,17 @@ pub fn command(args: &[&str]) -> anyhow::Result<String> {
 					a[name] = json!(v);
 				}
 			}
-			Ok(pretty(go(&a)?))
+			Ok(pretty(if args[0] == "refresh" { refresh(&a)? } else { go(&a)? }))
 		},
 		["open", id] => Ok(pretty(open_pr(&json!({ "pr": id.parse::<u64>().context("the pull request number")? }))?)),
-		_ => bail!("usage: tern-azdo prompts | repos | repo show KEY | repo set KEY [--dir D] [--agent A] | repo prompt KEY KIND [--text T | --stdin | --reset] | repo remove KEY | files [filter TEXT | select [TEXT] [--mode M] | clear] | view [--prs W] [--threads W] [--files] | go [--pr N] [--tab T] [--filter F] [--file F] [--line N] [--thread ID] | search TEXT | dismiss | open PR"),
+		_ => bail!("usage: tern-azdo prompts | repos | repo show KEY | repo set KEY [--dir D] [--agent A] | repo prompt KEY KIND [--text T | --stdin | --reset] | repo remove KEY | files [filter TEXT | select [TEXT] [--mode M] | clear] | view [--prs W] [--threads W] [--files] | refresh [--file F] [--line N] | go [--pr N] [--tab T] [--filter F] [--file F] [--line N] [--thread ID] | search TEXT | dismiss | open PR"),
 	}
 }
 
 /// The tools the MCP server offers: name, description, JSON schema of the arguments, and the operation.
 type Tool = (&'static str, &'static str, fn() -> Value, fn(&Value) -> anyhow::Result<Value>);
 
-const TOOLS: [Tool; 13] = [
+const TOOLS: [Tool; 14] = [
 	("azdo_ai_info", "What can be configured for the AI actions in tern-azdo: prompt kinds with their default templates, the template variables, the agent setting. Read this first.", || json!({ "type": "object", "properties": {} }), info),
 	("azdo_ai_repos", "List the repos that have saved AI settings, with their effective prompts.", || json!({ "type": "object", "properties": {} }), list),
 	("azdo_ai_repo_get", "One repo's checkout folder, agent and effective prompt templates (a default is reported with custom=false).", || json!({ "type": "object", "properties": { "repo": { "type": "string", "description": "project/repo" } }, "required": ["repo"] }), get),
@@ -381,6 +391,17 @@ const TOOLS: [Tool; 13] = [
 			} })
 		},
 		go,
+	),
+	(
+		"azdo_refresh",
+		"Reload the pull request open in the tern-azdo view (its commits, files, diffs and comments) and the list, then optionally take the user somewhere with the same fields as azdo_go (file, line, thread, filter, tab). Call it after code was pushed to the PR's branch or a comment was added, so the user sees the change. Returns where the view ended up.",
+		|| {
+			json!({ "type": "object", "properties": {
+				"tab": { "type": "string", "enum": ["overview", "files"] }, "filter": { "type": "string" },
+				"file": { "type": "string" }, "line": { "type": "integer" }, "thread": { "type": "integer" }, "view": { "type": "string", "enum": ["overview", "diff"] }
+			} })
+		},
+		refresh,
 	),
 	("azdo_search", "Open the pull request picker in front of the user with words typed in, and return the matching pull requests. Use azdo_go with a pr to open one, or azdo_dismiss to close the picker.", || json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }), search),
 	("azdo_dismiss", "Close the pull request picker and any dialog in the tern-azdo view.", || json!({ "type": "object", "properties": {} }), dismiss),

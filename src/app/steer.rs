@@ -211,7 +211,7 @@ impl App {
 		// A move to another pull request finishes once its details are in.
 		if let Some(c) = self.steer_wait.take() {
 			match self.page.as_ref() {
-				Some(p) if p.detail.is_some() => {
+				Some(p) if p.detail.is_some() && !p.reloading => {
 					self.steer_go(&c);
 					self.steer_done(&c);
 					changed = true;
@@ -401,6 +401,15 @@ impl App {
 					return false;
 				}
 				self.steer_go(c);
+			},
+			"refresh" => {
+				self.refresh();
+				if let Some(p) = &mut self.page {
+					p.reloading = true;
+					// Whatever else it names (a file, a line, a comment) happens once the new data is in.
+					self.steer_wait = Some(c.clone());
+					return false;
+				}
 			},
 			"filter" => {
 				self.compose = self.compose.take().filter(|c| c.kind != ComposeKind::Files);

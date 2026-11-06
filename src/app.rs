@@ -592,6 +592,8 @@ struct Page {
 	pending: Option<u32>,
 	/// A line to scroll the diff to once the selected file loads.
 	at_line: Option<u32>,
+	/// A reload was asked for and its answer has not come yet.
+	reloading: bool,
 	/// The change the last jump went to (its place in the file's list of changes).
 	change:  Option<usize>,
 	/// A jump to make once the selected file loads: its first change (true) or last (false).
@@ -615,6 +617,7 @@ impl Page {
 			thread: None,
 			pending: None,
 			at_line: None,
+			reloading: false,
 			change: None,
 			go: None,
 		}
@@ -1318,6 +1321,7 @@ impl App {
 				},
 				Reply::Detail(id, r) => {
 					let Some(p) = self.page.as_mut().filter(|p| p.pr.pull_request_id == id) else { continue };
+					p.reloading = false;
 					match r {
 						Ok(b) => {
 							let (pr, detail) = *b;
