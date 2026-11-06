@@ -4,7 +4,7 @@
 use anyhow::{Context, bail};
 use serde_json::{Value, json};
 
-use crate::{config, review};
+use crate::{config, remote, review};
 
 fn kind_of(id: &str) -> anyhow::Result<review::Kind> {
 	review::Kind::ALL.into_iter().find(|k| k.id() == id).with_context(|| {
@@ -115,6 +115,108 @@ pub fn set(args: &Value) -> anyhow::Result<Value> {
 	Ok(out)
 }
 
+/// The state of the file tree, cut down to what a caller needs: the files shown, which are selected.
+fn files_summary(state: Value) -> Value {
+	let files = state["files"].as_array().cloned().unwrap_or_default();
+	let shown: Vec<Value> = files.iter().filter(|f| f["shown"] == true).map(|f| json!({ "path": f["path"], "status": f["status"], "selected": f["selected"] })).collect();
+	let selected: Vec<Value> = files.iter().filter(|f| f["selected"] == true).map(|f| f["path"].clone()).collect();
+	json!({ "pr": state["pr"], "tab": state["tab"], "filter": state["filter"], "filter_error": state["filter_error"], "total": files.len(), "shown": shown, "selected": selected })
+}
+
+/// The pull request on screen, its file tree's filter, the files shown and the files selected.
+pub fn files(_: &Value) -> anyhow::Result<Value> {
+	Ok(files_summary(remote::current()?))
+}
+
+/// Filter the file tree on screen. Terms are separated by commas; a term is a fuzzy name, a `*.cs` glob or a `/regex/`,
+/// and `!` in front leaves out what it matches. An empty filter shows everything.
+pub fn files_filter(args: &Value) -> anyhow::Result<Value> {
+	let text = text(args, "text").context("`text` is required (\"\" clears the filter)")?;
+	Ok(files_summary(remote::run(json!({ "cmd": "filter", "text": text }))?))
+}
+
+/// Select files in the file tree on screen, for "Review selected" and "Add selected as context". `text` is a filter like
+/// `files_filter` takes (omitted: the files the tree shows), or `paths` names them. `mode` is set (default), add, remove or clear.
+pub fn files_select(args: &Value) -> anyhow::Result<Value> {
+	let mut cmd = json!({ "cmd": "select" });
+	for name in ["text", "paths", "mode"] {
+		if let Some(v) = args.get(name).filter(|v| !v.is_null()) {
+			cmd[name] = v.clone();
+		}
+	}
+	Ok(files_summary(remote::run(cmd)?))
+}
+
+/// Open a pull request from the list on its Files tab.
+pub fn open_pr(args: &Value) -> anyhow::Result<Value> {
+	let id = args.get("pr").and_then(Value::as_u64).context("`pr` is required: the pull request number")?;
+	Ok(files_summary(remote::run(json!({ "cmd": "open", "pr": id }))?))
+}
+
+/// Whether every word of `query` is in `item` (anywhere in its JSON, any case).
+fn has_words(item: &Value, query: &str) -> bool {
+	let hay = item.to_string().to_lowercase();
+	query.to_lowercase().split_whitespace().all(|w| hay.contains(w))
+}
+
+/// What the view shows. Lists are left out unless asked for: `prs` and `threads` take words to narrow them (or true for
+/// all), `files` true.
+fn view_of(state: Value, args: &Value) -> Value {
+	let narrowed = |name: &str, list: &Value| -> Option<Value> {
+		let items = list.as_array()?;
+		match args.get(name)? {
+			Value::String(q) if !q.trim().is_empty() => Some(Value::Array(items.iter().filter(|i| has_words(i, q)).cloned().collect())),
+			Value::Bool(false) | Value::Null => None,
+			_ => Some(list.clone()),
+		}
+	};
+	let mut v = json!({
+		"pr": state["pr"], "tab": state["tab"], "file": state["file"], "thread": state["thread"], "filter": state["filter"],
+		"filter_error": state["filter_error"], "picker": state["picker"],
+		"counts": { "prs": state["prs"].as_array().map_or(0, Vec::len), "files": state["files"].as_array().map_or(0, Vec::len), "threads": state["threads"].as_array().map_or(0, Vec::len) },
+	});
+	for name in ["prs", "threads", "files"] {
+		if let Some(list) = narrowed(name, &state[name]) {
+			v[name] = list;
+		}
+	}
+	if !args["files"].is_null() && args["files"] != false {
+		v["selected"] = Value::Array(state["files"].as_array().map_or_else(Vec::new, |f| f.iter().filter(|x| x["selected"] == true).map(|x| x["path"].clone()).collect()));
+	}
+	v
+}
+
+/// Where the user is in the tern-azdo view, and what they could be taken to: the pull requests, and the open one's files and
+/// comments, each narrowed by words.
+pub fn view(args: &Value) -> anyhow::Result<Value> {
+	Ok(view_of(remote::current()?, args))
+}
+
+/// Take the user somewhere: a pull request (`pr`), its `tab` (overview or files), a file-tree `filter`, a `file` (a path, or
+/// words the path matches), a `line` of it, or a comment `thread` (`view`: overview to show it in the overview instead of on the
+/// diff). Any mix; they apply in that order. Returns where the view ended up.
+pub fn go(args: &Value) -> anyhow::Result<Value> {
+	let mut cmd = json!({ "cmd": "go" });
+	for name in ["pr", "tab", "filter", "file", "line", "thread", "view"] {
+		if let Some(v) = args.get(name).filter(|v| !v.is_null()) {
+			cmd[name] = v.clone();
+		}
+	}
+	Ok(view_of(remote::run(cmd)?, &json!({})))
+}
+
+/// Open the pull request picker with `text` typed in, in front of the user. Returns the pull requests that match it.
+pub fn search(args: &Value) -> anyhow::Result<Value> {
+	let q = text(args, "text").context("`text` is required")?;
+	let state = remote::run(json!({ "cmd": "search", "text": q }))?;
+	Ok(view_of(state, &json!({ "prs": q })))
+}
+
+/// Close the picker and any dialog.
+pub fn dismiss(_: &Value) -> anyhow::Result<Value> {
+	Ok(view_of(remote::run(json!({ "cmd": "dismiss" }))?, &json!({})))
+}
+
 pub fn remove(args: &Value) -> anyhow::Result<Value> {
 	let key = key_of(args)?;
 	let mut c = config::load().unwrap_or_default();
@@ -164,14 +266,59 @@ pub fn command(args: &[&str]) -> anyhow::Result<String> {
 				},
 			}
 		},
-		_ => bail!("usage: tern-azdo prompts | repos | repo show KEY | repo set KEY [--dir D] [--agent A] | repo prompt KEY KIND [--text T | --stdin | --reset] | repo remove KEY"),
+		["files"] => Ok(pretty(files(&json!({}))?)),
+		["files", "clear"] => Ok(pretty(files_select(&json!({ "mode": "clear" }))?)),
+		["files", "filter", rest @ ..] => Ok(pretty(files_filter(&json!({ "text": rest.join(" ") }))?)),
+		// `files select [TEXT] [--mode add|remove|set]`: no text selects what the tree shows.
+		["files", "select", rest @ ..] => {
+			let words: Vec<&str> = rest.iter().copied().filter(|w| *w != "--mode" && Some((*w).to_owned()) != flag("--mode")).collect();
+			let mut a = json!({});
+			if !words.is_empty() {
+				a["text"] = json!(words.join(" "));
+			}
+			if let Some(m) = flag("--mode") {
+				a["mode"] = json!(m);
+			}
+			Ok(pretty(files_select(&a)?))
+		},
+		["view", rest @ ..] => {
+			let mut a = json!({});
+			if rest.contains(&"--files") {
+				a["files"] = json!(true);
+			}
+			for name in ["prs", "threads"] {
+				if let Some(v) = flag(&format!("--{name}")) {
+					a[name] = json!(v);
+				}
+			}
+			Ok(pretty(view(&a)?))
+		},
+		["search", rest @ ..] => Ok(pretty(search(&json!({ "text": rest.join(" ") }))?)),
+		["dismiss"] => Ok(pretty(dismiss(&json!({}))?)),
+		// `go [--pr N] [--tab overview|files] [--filter F] [--file F] [--line N] [--thread ID] [--view overview]`
+		["go", ..] => {
+			let mut a = json!({});
+			for name in ["pr", "line", "thread"] {
+				if let Some(v) = flag(&format!("--{name}")) {
+					a[name] = json!(v.parse::<u64>().with_context(|| format!("--{name} takes a number"))?);
+				}
+			}
+			for name in ["tab", "filter", "file", "view"] {
+				if let Some(v) = flag(&format!("--{name}")) {
+					a[name] = json!(v);
+				}
+			}
+			Ok(pretty(go(&a)?))
+		},
+		["open", id] => Ok(pretty(open_pr(&json!({ "pr": id.parse::<u64>().context("the pull request number")? }))?)),
+		_ => bail!("usage: tern-azdo prompts | repos | repo show KEY | repo set KEY [--dir D] [--agent A] | repo prompt KEY KIND [--text T | --stdin | --reset] | repo remove KEY | files [filter TEXT | select [TEXT] [--mode M] | clear] | view [--prs W] [--threads W] [--files] | go [--pr N] [--tab T] [--filter F] [--file F] [--line N] [--thread ID] | search TEXT | dismiss | open PR"),
 	}
 }
 
 /// The tools the MCP server offers: name, description, JSON schema of the arguments, and the operation.
 type Tool = (&'static str, &'static str, fn() -> Value, fn(&Value) -> anyhow::Result<Value>);
 
-const TOOLS: [Tool; 5] = [
+const TOOLS: [Tool; 13] = [
 	("azdo_ai_info", "What can be configured for the AI actions in tern-azdo: prompt kinds with their default templates, the template variables, the agent setting. Read this first.", || json!({ "type": "object", "properties": {} }), info),
 	("azdo_ai_repos", "List the repos that have saved AI settings, with their effective prompts.", || json!({ "type": "object", "properties": {} }), list),
 	("azdo_ai_repo_get", "One repo's checkout folder, agent and effective prompt templates (a default is reported with custom=false).", || json!({ "type": "object", "properties": { "repo": { "type": "string", "description": "project/repo" } }, "required": ["repo"] }), get),
@@ -188,6 +335,45 @@ const TOOLS: [Tool; 5] = [
 		},
 		set,
 	),
+	("azdo_files", "The pull request open in the tern-azdo view, its file tree's filter, the files shown and the files selected.", || json!({ "type": "object", "properties": {} }), files),
+	(
+		"azdo_files_filter",
+		"Filter the file tree in the tern-azdo view. Comma-separated terms, any of which may match: a plain term is a fuzzy match on the path (letters in order), `*.cs` or `src/**/Tax*` is a glob, `/regex/` is a case-insensitive regex (commas allowed inside), and a leading `!` leaves out what the term matches. \"\" clears it. Returns the files now shown.",
+		|| json!({ "type": "object", "properties": { "text": { "type": "string", "description": "e.g. \"*.vue, /Order|Tax/, !tests\"" } }, "required": ["text"] }),
+		files_filter,
+	),
+	(
+		"azdo_files_select",
+		"Select files in the file tree, so the human can press Review selected or Add selected as context (or an agent can ask them to). `text` takes the same filter syntax as azdo_files_filter; omit it to select what the tree currently shows; `paths` lists exact paths instead. `mode`: set (default), add, remove or clear.",
+		|| {
+			json!({ "type": "object", "properties": {
+				"text": { "type": "string" },
+				"paths": { "type": "array", "items": { "type": "string" } },
+				"mode": { "type": "string", "enum": ["set", "add", "remove", "clear"] }
+			} })
+		},
+		files_select,
+	),
+	("azdo_open_pr", "Open a pull request from the list (by number) on its Files tab. Its files load a moment later; call azdo_files to see them.", || json!({ "type": "object", "properties": { "pr": { "type": "integer" } }, "required": ["pr"] }), open_pr),
+	(
+		"azdo_view",
+		"Where the user is in the tern-azdo view (pull request, tab, file, selected comment, file filter, picker) and counts. Ask for lists to find where to take them: `prs` (words, e.g. \"ledger tax\", or true), `threads` (words matched against comment text, author, file, or true), `files` (true). Thread ids and file paths from here feed azdo_go.",
+		|| json!({ "type": "object", "properties": { "prs": { "type": ["string", "boolean"] }, "threads": { "type": ["string", "boolean"] }, "files": { "type": "boolean" } } }),
+		view,
+	),
+	(
+		"azdo_go",
+		"Take the user somewhere in the tern-azdo view, any mix: `pr` (number, opened from the list), `tab` (overview or files), `filter` (file tree filter, same syntax as azdo_files_filter, e.g. \"*.config\"), `file` (a path or words it matches), `line` (a line of that file's new side), `thread` (a comment thread id from azdo_view; `view`: \"overview\" shows it in the overview, else it is shown on the diff when it has a file). Returns where the view ended up.",
+		|| {
+			json!({ "type": "object", "properties": {
+				"pr": { "type": "integer" }, "tab": { "type": "string", "enum": ["overview", "files"] }, "filter": { "type": "string" },
+				"file": { "type": "string" }, "line": { "type": "integer" }, "thread": { "type": "integer" }, "view": { "type": "string", "enum": ["overview", "diff"] }
+			} })
+		},
+		go,
+	),
+	("azdo_search", "Open the pull request picker in front of the user with words typed in, and return the matching pull requests. Use azdo_go with a pr to open one, or azdo_dismiss to close the picker.", || json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }), search),
+	("azdo_dismiss", "Close the pull request picker and any dialog in the tern-azdo view.", || json!({ "type": "object", "properties": {} }), dismiss),
 	("azdo_ai_repo_remove", "Forget a repo's saved AI settings (back to defaults).", || json!({ "type": "object", "properties": { "repo": { "type": "string", "description": "project/repo" } }, "required": ["repo"] }), remove),
 ];
 

@@ -237,6 +237,10 @@ impl App {
 				self.note = "that one is running; the button is ready again in a moment".into();
 				return;
 			}
+			if r.kind.is_selection() && self.page.as_ref().is_none_or(|p| p.checked.is_empty()) {
+				self.note = "select files in the Files tab first (Space, or the boxes)".into();
+				return;
+			}
 			if matches!(r.kind, review::Kind::Explain | review::Kind::Respond) && self.review_vars(r.thread, None).is_some_and(|v| v.thread == "(no comment)") {
 				self.note = "this pull request has no comments yet".into();
 				return;

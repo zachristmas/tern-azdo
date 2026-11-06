@@ -20,10 +20,14 @@ pub enum Kind {
 	ExplainCode,
 	/// Review the code at a line of the diff.
 	ReviewCode,
+	/// Review the files selected in the file tree.
+	ReviewFiles,
+	/// Give the agent the files selected in the file tree as background.
+	ContextFiles,
 }
 
 impl Kind {
-	pub const ALL: [Kind; 6] = [Kind::Review, Kind::Context, Kind::Explain, Kind::Respond, Kind::ExplainCode, Kind::ReviewCode];
+	pub const ALL: [Kind; 8] = [Kind::Review, Kind::Context, Kind::Explain, Kind::Respond, Kind::ExplainCode, Kind::ReviewCode, Kind::ReviewFiles, Kind::ContextFiles];
 
 	pub fn id(self) -> &'static str {
 		match self {
@@ -33,7 +37,14 @@ impl Kind {
 			Kind::Respond => "respond",
 			Kind::ExplainCode => "explain_code",
 			Kind::ReviewCode => "review_code",
+			Kind::ReviewFiles => "review_files",
+			Kind::ContextFiles => "context_files",
 		}
+	}
+
+	/// Whether it is about the files selected in the file tree.
+	pub fn is_selection(self) -> bool {
+		matches!(self, Kind::ReviewFiles | Kind::ContextFiles)
 	}
 
 	pub fn label(self) -> &'static str {
@@ -44,6 +55,8 @@ impl Kind {
 			Kind::Respond => "respond",
 			Kind::ExplainCode => "explain code",
 			Kind::ReviewCode => "review code",
+			Kind::ReviewFiles => "review selected",
+			Kind::ContextFiles => "context selected",
 		}
 	}
 
@@ -56,6 +69,8 @@ impl Kind {
 			Kind::Respond => "Draft a reply",
 			Kind::ExplainCode => "Explain this code",
 			Kind::ReviewCode => "Review this code",
+			Kind::ReviewFiles => "Review the selected files",
+			Kind::ContextFiles => "Add the selected files as context",
 		}
 	}
 
@@ -67,6 +82,8 @@ impl Kind {
 			Kind::Respond => RESPOND,
 			Kind::ExplainCode => EXPLAIN_CODE,
 			Kind::ReviewCode => REVIEW_CODE,
+			Kind::ReviewFiles => REVIEW_FILES,
+			Kind::ContextFiles => CONTEXT_FILES,
 		}
 	}
 }
@@ -122,6 +139,25 @@ const REVIEW_CODE: &str = "Review this code from Azure DevOps pull request !{id}
 	Review the code at and around that line for bugs, edge cases, security problems and needless complexity, and say whether my note is right. \
 	Give findings by line, most serious first. Do not post anything to the pull request and do not change any files.";
 
+const REVIEW_FILES: &str = "Review part of this pull request: Azure DevOps pull request !{id}, \"{title}\", by {author} in {project}/{repo} ({source} into {target}).\n\
+	Link: {url}\n\n\
+	Description:\n{description}\n\n\
+	Review only these {selected_count} files:\n{selected}\n\n\
+	Comments so far:\n{comments}\n\n\
+	Run `git fetch origin {source} {target}`, then read `git diff origin/{target}...origin/{source}` limited to those paths, and the code around each change. \
+	Use the rest of the pull request only for context. \
+	Look for bugs, security problems, missing tests, broken edge cases and needless complexity, and check whether the open comments about these files were addressed. \
+	List findings by file and line, most serious first, then give a one-line verdict. \
+	Do not post anything to the pull request and do not change any files.";
+
+const CONTEXT_FILES: &str = "Background for this session, no task yet: Azure DevOps pull request !{id}, \"{title}\", by {author} in {project}/{repo} ({source} into {target}).\n\
+	Link: {url}\n\n\
+	Description:\n{description}\n\n\
+	The files that matter ({selected_count}):\n{selected}\n\n\
+	Comments so far:\n{comments}\n\n\
+	Run `git fetch origin {source} {target}` and read `git diff origin/{target}...origin/{source}` limited to those paths, so you know that part of the change. \
+	Then reply with a two-sentence summary and wait for my questions. Do not review or change anything until I ask.";
+
 /// The values a prompt can use, as `{name}` (see [`NAMES`]).
 #[derive(Clone, Debug, Default)]
 pub struct Vars {
@@ -141,10 +177,12 @@ pub struct Vars {
 	pub line:        String,
 	pub comment:     String,
 	pub code:        String,
+	pub selected:    String,
+	pub selected_count: String,
 }
 
 /// The variables, for the hint above the prompt editor.
-pub const NAMES: &str = "{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments} {thread} {file} {line} {comment} {code}";
+pub const NAMES: &str = "{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments} {thread} {file} {line} {comment} {code} {selected} {selected_count}";
 
 /// The prompt with its variables filled in.
 pub fn render(prompt: &str, v: &Vars) -> String {
@@ -165,6 +203,8 @@ pub fn render(prompt: &str, v: &Vars) -> String {
 		("{line}", &v.line),
 		("{comment}", &v.comment),
 		("{code}", &v.code),
+		("{selected}", &v.selected),
+		("{selected_count}", &v.selected_count),
 	];
 	// One pass, so a value that contains `{title}` stays as written.
 	let mut out = String::with_capacity(prompt.len());

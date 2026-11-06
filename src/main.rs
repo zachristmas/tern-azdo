@@ -11,6 +11,8 @@ mod clip;
 mod config;
 mod demo;
 mod diff;
+mod filter;
+mod remote;
 mod review;
 mod tree;
 mod worker;
@@ -77,7 +79,7 @@ fn main() -> anyhow::Result<()> {
 			Ok(())
 		},
 		["mcp"] => cli::serve(),
-		["prompts" | "repos", ..] | ["repo", ..] => {
+		["prompts" | "repos" | "files" | "open" | "view" | "go" | "search" | "dismiss", ..] | ["repo", ..] => {
 			let words: Vec<&str> = args.iter().map(String::as_str).collect();
 			println!("{}", cli::command(&words)?);
 			Ok(())

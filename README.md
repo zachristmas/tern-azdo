@@ -36,8 +36,6 @@ Sort by newest or oldest and the list runs across every project at once. With th
 
 <p align="center"><img src="docs/nav-date.png" alt="The navigator sorted newest first across projects: every card is labeled with its project and repo" width="900"></p>
 
-<p align="center"><img src="docs/switcher.png" alt="The quick switcher open on a search for tax, matching a pull request in another project" width="900"></p>
-
 **A page per pull request.** A status card says where the PR stands: who approved, who is waiting or rejected, required reviewers still to vote, merge conflicts, and how many comment threads are open. The description renders as Markdown, and reviewers and linked work items sit beside it.
 
 <p align="center"><img src="docs/overview.png" alt="A pull request's overview: the review status card, the rendered description, reviewers and work items, and the AI menu open from the gear with an editable prompt per kind" width="900"></p>
@@ -51,6 +49,14 @@ Sort by newest or oldest and the list runs across every project at once. With th
 <p align="center"><img src="docs/whole.png" alt="The whole file view, opened five lines above its first change" width="900"></p>
 
 <p align="center"><img src="docs/diff.png" alt="The Files tab: a folder tree of changed files, the diff with a comment thread under the line it is about, and the next and previous change buttons" width="900"></p>
+
+**Filter the files, select some, review just those.** The filter box above the tree takes comma-separated terms: a plain term matches loosely like a fuzzy finder (`ordrvw`), `*.config` or `src/**/Tax*` is a glob, `/\.vue$/` is a regex (commas allowed inside), and a leading `!` leaves out what matches. Tick the boxes beside files and folders (or press Space on a file, Ctrl+A for everything shown) and Review selected and Add selected as context appear above the tree. They go through the same confirmation and templates as the rest, with `{selected}` and `{selected_count}` available.
+
+<p align="center"><img src="docs/tree-select.png" alt="The file tree with three files and a folder ticked, Review selected and Add selected as context buttons above it, and a comment thread open on the diff" width="900"></p>
+
+<p align="center"><img src="docs/ai-selected.png" alt="The confirmation for Review selected: the prompt lists the four selected files" width="900"></p>
+
+**Your agent can drive it.** Anything you can do by hand an agent can do in front of you over MCP or the command line: open a pull request, jump to a comment on the overview or on the diff, to a file or a line, filter the tree to `*.config` changes, tick files, or put a search into the picker. It can read what you are looking at and list the PRs, files and comments to choose from, so a loose request ("show me the config changes in the ledger PR") turns into a few calls. See below.
 
 **Review with AI.** Two buttons at the top of every PR start a coding agent in a new Tern block, beside the plugin, in your local checkout of that repo: Review with AI (`i`) asks for a review of the diff, and Add as context (`t`) has it read the PR and wait for your questions. On a comment thread, Explain (`e`) and Respond with AI (`w`) ask the agent to explain the comment or draft a reply. Click a line number in the diff and the comment box has Explain with AI and Review with AI for that line, with the code around it and anything you have typed so far. Nothing is posted to the PR; the agent only reads and answers.
 
@@ -115,7 +121,12 @@ tern-azdo repo show KEY           one repo's folder, agent and effective prompts
 tern-azdo repo set KEY [--dir D] [--agent A]
 tern-azdo repo prompt KEY KIND [--text T | --stdin | --reset]   print, set or reset one template
 tern-azdo repo remove KEY         back to defaults
-tern-azdo mcp                     the same operations as an MCP server on stdio
+tern-azdo view [--prs W] [--threads W] [--files]   where you are, and what an agent could take you to
+tern-azdo go [--pr N] [--tab overview|files] [--filter F] [--file F] [--line N] [--thread ID]
+tern-azdo files [filter TEXT | select [TEXT] [--mode add|remove|set] | clear]
+tern-azdo search TEXT             open the picker with TEXT typed in
+tern-azdo dismiss                 close the picker and dialogs
+tern-azdo mcp                     all of the above as an MCP server on stdio
 ```
 
 Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts and other terminals.
@@ -130,7 +141,11 @@ To give an agent the same operations as tools, add the server to its MCP config:
 { "mcpServers": { "tern-azdo": { "command": "tern-azdo", "args": ["mcp"] } } }
 ```
 
-The tools are `azdo_ai_info` (read this first), `azdo_ai_repos`, `azdo_ai_repo_get`, `azdo_ai_repo_set` and `azdo_ai_repo_remove`.
+The settings tools are `azdo_ai_info` (read this first), `azdo_ai_repos`, `azdo_ai_repo_get`, `azdo_ai_repo_set` and `azdo_ai_repo_remove`.
+
+### Driving the view from an agent
+
+The running view reads commands from a file beside `config.json` about once a second and writes what it shows to `state.json`, so the CLI and MCP tools act on the view in front of you and report where it ended up. Start with `azdo_view`: it says which PR, tab, file and comment you are on, and with `prs`, `threads` or `files` set (to words, or true) it lists what could be opened, so an agent can match a loose request to a PR number, a comment id or a file path. Then `azdo_go` takes you there, in any mix: `pr`, `tab`, `filter`, `file` (a path or words it matches), `line`, `thread` (shown on the diff, or in the overview with `view: "overview"`). `azdo_files_filter` and `azdo_files_select` change the tree's filter and selection, `azdo_search` opens the picker with words typed in, and `azdo_dismiss` closes it. The filter syntax is the one in the box: `*.config, /^src\/Checkout/, !tests`. Opening a PR loads its files a moment later; `azdo_go` waits for them.
 
 ## Keys
 
@@ -160,8 +175,11 @@ The tools are `azdo_ai_info` (read this first), `azdo_ai_repos`, `azdo_ai_repo_g
 | `h` `l`, `←` `→` | Fold / unfold the file's folder |
 | `gg` / `G` | Top / bottom of the overview or diff |
 | `Ctrl+D` `Ctrl+U`, `d` `u` | Half a screen down / up |
-| `Ctrl+F` `Ctrl+B`, `Space`, `PgDn` `PgUp` | A screen down / up |
+| `Ctrl+F` `Ctrl+B`, `Space` (Overview), `PgDn` `PgUp` | A screen down / up |
 | `n` / `p` | Next / previous comment |
+| `Space` / `Ctrl+A` | Files: select the file / every shown file (`Esc` unselects) |
+| `F` | Files: filter the tree |
+| `R` / `T` | AI review / add the selected files as context |
 | `s` | Inline or side by side |
 | `x` | Whole file or changes |
 | `v` then `1` `2` `3` `4` `0` | Approve, with suggestions, wait, reject, reset |

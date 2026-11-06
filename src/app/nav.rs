@@ -176,6 +176,22 @@ impl App {
 		self.tree_req = Some(row_path(sel));
 	}
 
+	/// The picker's search text, when it is open.
+	pub(super) fn nav_query(&self) -> Option<String> {
+		self.nav.as_ref().map(|n| n.query.clone())
+	}
+
+	/// Open the picker with `text` typed in, on its first pull request.
+	pub(super) fn search_nav(&mut self, text: &str) {
+		self.open_nav();
+		let sel = self.nav_rows(text).iter().position(|r| matches!(r, NavRow::Pr(_))).unwrap_or(0);
+		if let Some(n) = &mut self.nav {
+			n.query = text.to_owned();
+			n.sel = sel;
+		}
+		self.tree_req = Some(row_path(sel));
+	}
+
 	/// Fold or unfold a project.
 	pub(super) fn fold(&mut self, name: String) {
 		if !self.folded.remove(&name) {

@@ -19,9 +19,10 @@ use tern_sdk::{
 
 mod ai;
 mod nav;
+mod steer;
 
 use crate::{
-	review,
+	filter, remote, review,
 	api::{self, Client, Detail, Identity, Pr, Thread},
 	config,
 	diff::{self, FileDiff},
@@ -184,7 +185,12 @@ const CSS: &str = "\
 .small{font-size:11.5px}\
 .wi{padding:4px 0}.wk{color:var(--sf-c-accent);font-size:11.5px}\
 .azfv{display:flex;gap:16px;height:100%;overflow:hidden;box-sizing:border-box;padding-top:10px;font-family:Geist,system-ui,sans-serif;font-size:12.9px}\
-.aztree{max-height:100%;width:30%;min-width:240px;max-width:420px;flex-shrink:0;box-sizing:border-box;overflow-y:auto;padding:8px 6px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 32%,transparent);border-radius:8px;background:color-mix(in srgb,var(--sf-c-muted) 4%,transparent)}\
+.aztw{display:flex;flex-direction:column;gap:8px;max-height:100%;width:30%;min-width:240px;max-width:420px;flex-shrink:0;box-sizing:border-box}\
+.azth{display:flex;flex-direction:column;gap:6px}\
+.tff{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:7px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 40%,transparent);cursor:text;overflow:hidden;white-space:nowrap}.tff .aix{margin-left:auto;cursor:pointer;color:var(--sf-c-muted)}.tfe{color:#e5484d;font-size:11.5px}\
+.tsel{display:flex;align-items:center;gap:6px;padding:0 4px;color:var(--sf-c-muted)}.tsa{display:flex;flex-wrap:wrap;gap:6px}\
+.tsb{padding:3px 10px;border-radius:6px;cursor:pointer;font-weight:600;background:color-mix(in srgb,var(--sf-c-accent) 22%,transparent);border:1px solid var(--sf-c-accent)}.tsb.sec{background:transparent;border-color:color-mix(in srgb,var(--sf-c-muted) 50%,transparent);font-weight:400}.ck{flex-shrink:0;cursor:pointer;color:var(--sf-c-accent);width:14px;text-align:center}\
+.aztree{flex:1;min-height:0;box-sizing:border-box;overflow-y:auto;padding:8px 6px;border:1px solid color-mix(in srgb,var(--sf-c-muted) 32%,transparent);border-radius:8px;background:color-mix(in srgb,var(--sf-c-muted) 4%,transparent)}\
 .aztr{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding-right:10px;white-space:nowrap;border-radius:5px;cursor:pointer;overflow:hidden}\
 .aztr:hover{background:color-mix(in srgb,var(--sf-c-muted) 14%,transparent)}\
 .aztr.cur{background:color-mix(in srgb,var(--sf-c-accent) 24%,transparent)}\
@@ -270,6 +276,18 @@ enum Msg {
 	Fold(String),
 	/// Hide or show the rail.
 	RailToggle,
+	/// The file tree: check or uncheck a file (its place in the change list).
+	Check(usize),
+	/// The file tree: check or uncheck every shown file in a folder.
+	CheckDir(String),
+	/// The file tree: check every shown file, or none when all are.
+	CheckAll,
+	/// The file tree: uncheck everything.
+	CheckClear,
+	/// The file tree: type a filter.
+	FilesFilter,
+	/// The file tree: drop the filter.
+	FilesFilterClear,
 	/// The previous (false) or next (true) PR in this project.
 	StepPr(bool),
 	/// The AI modal: copy the prompt instead of starting an agent.
@@ -431,6 +449,8 @@ enum ComposeKind {
 	/// The organization URL, on first run.
 	Org,
 	Filter,
+	/// The file tree's filter.
+	Files,
 	/// A new thread when none, else a reply in that thread.
 	Comment(Option<u32>),
 	/// Which agent to run.
@@ -550,12 +570,18 @@ struct Page {
 	split:   bool,
 	/// Folders folded in the file tree.
 	folded:  HashSet<String>,
+	/// What the file tree shows: the typed or sent filter.
+	filter:  filter::Filter,
+	/// The files checked in the tree (their paths), for the "selected" AI actions.
+	checked: HashSet<String>,
 	/// Whole files instead of hunks.
 	full:    bool,
 	/// The selected comment thread.
 	thread:  Option<u32>,
 	/// A thread to scroll the diff to once the selected file loads.
 	pending: Option<u32>,
+	/// A line to scroll the diff to once the selected file loads.
+	at_line: Option<u32>,
 	/// The change the last jump went to (its place in the file's list of changes).
 	change:  Option<usize>,
 	/// A jump to make once the selected file loads: its first change (true) or last (false).
@@ -573,9 +599,12 @@ impl Page {
 			files: HashMap::new(),
 			split: false,
 			folded: HashSet::new(),
+			filter: filter::Filter::default(),
+			checked: HashSet::new(),
 			full: false,
 			thread: None,
 			pending: None,
+			at_line: None,
 			change: None,
 			go: None,
 		}
@@ -649,6 +678,22 @@ impl Page {
 		}
 	}
 
+	/// The rows of the file tree: folded as the user left it, or, with a filter, just what it lets through (all unfolded).
+	fn tree_rows(&self) -> Vec<tree::Row> {
+		let paths = self.paths();
+		if self.filter.is_active() {
+			tree::rows_where(&paths, &HashSet::new(), &|i| self.filter.matches(paths[i]))
+		} else {
+			tree::rows(&paths, &self.folded)
+		}
+	}
+
+	/// The files the filter lets through (their places in the change list), folded away or not.
+	fn matching(&self) -> Vec<usize> {
+		let paths = self.paths();
+		(0..paths.len()).filter(|i| self.filter.matches(paths[*i])).collect()
+	}
+
 	/// The change paths, in change-list order.
 	fn paths(&self) -> Vec<&str> {
 		self.detail.as_ref().map(|d| d.changes.iter().map(api::Change::path).collect()).unwrap_or_default()
@@ -690,6 +735,11 @@ struct App {
 	folded: HashSet<String>,
 	/// The rail is hidden, on a pane wide enough to show it.
 	rail_hidden: bool,
+	/// The last command from outside (`tern-azdo files ...`, MCP) that was acted on, and the state last written for it.
+	steer_applied: u64,
+	steer_last: String,
+	/// A move to another pull request that waits for it to load.
+	steer_wait: Option<serde_json::Value>,
 	/// The AI modal, when open.
 	ai: Option<ai::AiModal>,
 	/// When each AI button last started an agent, so it can say it is running.
@@ -737,11 +787,27 @@ enum ScrollReq {
 const OV_MAIN: &str = "main.pbody.ov.ovm";
 const OV_FIRST: &str = "main.pbody.ov.ovm.status";
 /// The Files tab's file tree, its diff's scroll container, and the node at the diff's top.
-const TREE: &str = "main.pbody.fv.tree";
+const TREE: &str = "main.pbody.fv.tw.tree";
+/// The file tree's filter box while it is being typed in.
+const TREE_FILTER: &str = "main.pbody.fv.tw.th.tfed";
 const FILES_DS: &str = "main.pbody.fv.dp.ds";
 const FILES_FIRST: &str = "main.pbody.fv.dp.ds.top";
 
 /// A folder row's key: its path hashed, because node ids are dotted and paths can hold dots.
+/// A folder's box: all, some or none of the files shown under it are checked.
+fn dir_mark(p: &Page, dir: &str) -> &'static str {
+	let prefix = format!("{dir}/");
+	let paths = p.paths();
+	let under: Vec<bool> = p.matching().into_iter().filter(|i| paths[*i].starts_with(&prefix)).map(|i| p.checked.contains(paths[i])).collect();
+	if !under.iter().any(|c| *c) {
+		"\u{2610}"
+	} else if under.iter().all(|c| *c) {
+		"\u{2611}"
+	} else {
+		"\u{25a3}"
+	}
+}
+
 fn dir_key(path: &str) -> String {
 	let h = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
 	format!("d{h:x}")
@@ -984,6 +1050,9 @@ impl App {
 			nav: None,
 			folded: HashSet::new(),
 			rail_hidden: false,
+			steer_applied: 0,
+			steer_last: String::new(),
+			steer_wait: None,
 			ai: None,
 			ai_run: HashMap::new(),
 			rv_menu: false,
@@ -1192,6 +1261,7 @@ impl App {
 	/// Handles finished jobs. True when something changed.
 	fn poll(&mut self) -> bool {
 		let mut changed = self.ai_expire();
+		changed |= self.steer_poll();
 		while let Ok(reply) = self.rx.try_recv() {
 			changed = true;
 			self.busy = self.busy.saturating_sub(1);
@@ -1253,12 +1323,15 @@ impl App {
 					let current = p.change().is_some_and(|c| c.path() == path);
 					p.files.insert(path, state);
 					// The whole file opens at its first change.
-					let go = current && p.pending.is_none() && (p.go.is_some() || p.full);
+					let at = if current { p.at_line.take() } else { None };
+						let go = current && p.pending.is_none() && at.is_none() && (p.go.is_some() || p.full);
 					if go {
 						p.go.get_or_insert(true);
 					}
 					if current && let Some(id) = p.pending.take() {
 						self.scroll_req = Some(ScrollReq::Reveal(format!("{FILES_DS}.t{id}")));
+					} else if let Some(n) = at {
+						self.goto_line(n);
 					} else if go {
 						self.finish_go();
 					}
@@ -1282,7 +1355,7 @@ impl App {
 
 	/// Lines for the main region (the dock takes the rest).
 	fn avail(&self) -> f64 {
-		let in_dock = self.compose.as_ref().is_some_and(|c| !matches!(c.kind, ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent));
+		let in_dock = self.compose.as_ref().is_some_and(|c| !matches!(c.kind, ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent | ComposeKind::Files));
 		let dock = 2.0 + if in_dock || self.voting { 2.2 } else { 0.0 };
 		(self.rows - dock - 0.5).max(6.0)
 	}
@@ -1325,13 +1398,14 @@ impl App {
 			}
 			dock.push(row.child(html::span("Esc cancels").class("dim")).into());
 		}
-		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. } | ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent)) {
+		if let Some(c) = self.compose.as_ref().filter(|c| !matches!(c.kind, ComposeKind::Inline { .. } | ComposeKind::ReviewPrompt(_) | ComposeKind::ReviewAgent | ComposeKind::Files)) {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
 				ComposeKind::ReviewAgent => "Agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
 				ComposeKind::ReviewPrompt(k) => format!("The {} prompt for this repo (Enter saves, Shift+Enter new line, Ctrl+P preview, Esc cancels)", k.label()),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
+				ComposeKind::Files => String::new(),
 				ComposeKind::Comment(None) => "New comment on the pull request (Enter sends, Shift+Enter new line, Esc cancels)".into(),
 				ComposeKind::Comment(Some(_)) => "Reply (Enter sends, Shift+Enter new line, Esc cancels)".into(),
 				ComposeKind::Line => format!("Line of {file} to comment on, -12 for a removed line, or click a line number in the diff (Enter goes on, Esc cancels)"),
@@ -1728,22 +1802,26 @@ impl App {
 			*m.entry(f).or_default() += 1;
 			m
 		});
-		let paths = p.paths();
-		let rows = tree::rows(&paths, &p.folded).into_iter().map(|r| -> tern_sdk::Node<Msg> {
+		let rows = p.tree_rows().into_iter().map(|r| -> tern_sdk::Node<Msg> {
 			match r {
-				tree::Row::Dir { path, label, depth, open } => html::div()
-					.key(dir_key(&path))
-					.class(format!("aztr azdir azd{}", depth.min(9)))
-					.on_click(Msg::Folder(path))
-					.child(html::span(if open { "▾" } else { "▸" }).class("azch"))
-					.child(html::span(label))
-					.into(),
+				tree::Row::Dir { path, label, depth, open } => {
+					let mark = dir_mark(p, &path);
+					html::div()
+						.key(dir_key(&path))
+						.class(format!("aztr azdir azd{}", depth.min(9)))
+						.on_click(Msg::Folder(path.clone()))
+						.child(html::span(mark).class("ck").title("Select the files in this folder").on_click(Msg::CheckDir(path)))
+						.child(html::span(if open { "▾" } else { "▸" }).class("azch"))
+						.child(html::span(label))
+						.into()
+				},
 				tree::Row::File { index, name, depth } => {
 					let c = &d.changes[index];
 					let mut row = html::div()
 						.key(format!("f{index}"))
 						.class(format!("aztr azd{}{}", depth.min(9), if index == p.file { " cur" } else { "" }))
 						.on_click(Msg::File(index))
+						.child(html::span(if p.checked.contains(c.path()) { "\u{2611}" } else { "\u{2610}" }).class("ck").title("Select this file (Space)").on_click(Msg::Check(index)))
 						.child(html::span(c.letter()).class(format!("fk {}", c.letter())))
 						.child(html::span(name).class("fn"));
 					if let Some(n) = counts.get(c.path()) {
@@ -1753,7 +1831,11 @@ impl App {
 				},
 			}
 		});
-		html::div().key("fv").class("azfv").child(html::div().key("tree").class("aztree").children(rows)).child(self.diff_pane(p))
+		let mut tree = html::div().key("tree").class("aztree").children(rows);
+		if p.filter.is_active() && p.matching().is_empty() {
+			tree = tree.child(html::div().class("azmsg").child(html::span("No files match.")));
+		}
+		html::div().key("fv").class("azfv").child(html::div().key("tw").class("aztw").child(self.tree_head(p)).child(tree)).child(self.diff_pane(p))
 	}
 
 	/// The selected file: its header, then its diff with each comment thread's card under the lines it is about.
@@ -2004,7 +2086,8 @@ impl App {
 	/// The next (or previous) file in the tree, skipping folded folders.
 	fn step_file(&mut self, forward: bool) {
 		let Some(p) = &self.page else { return };
-		let shown: Vec<usize> = tree::rows(&p.paths(), &p.folded)
+		let shown: Vec<usize> = p
+			.tree_rows()
 			.into_iter()
 			.filter_map(|r| match r {
 				tree::Row::File { index, .. } => Some(index),
@@ -2116,6 +2199,9 @@ impl App {
 		if let Some(d) = &p.detail {
 			let files: Vec<String> = d.changes.iter().take(300).map(|c| format!("{} {}", c.letter(), c.path().trim_start_matches('/'))).collect();
 			v.files = files.join("\n");
+				let picked: Vec<String> = d.changes.iter().filter(|c| p.checked.contains(c.path())).map(|c| format!("{} {}", c.letter(), c.path().trim_start_matches('/'))).collect();
+				v.selected_count = picked.len().to_string();
+				v.selected = picked.join("\n");
 			let comments: Vec<String> = d
 				.threads
 				.iter()
@@ -2153,6 +2239,8 @@ impl App {
 			v.code = Self::code_at(p, c.path(), *l, *left);
 		}
 		v.files = none(v.files, "(still loading)");
+		v.selected = none(v.selected, "(none selected)");
+		v.selected_count = none(v.selected_count, "0");
 		v.comments = none(v.comments, "(none)");
 		v.thread = none(v.thread, "(no comment)");
 		v.file = none(v.file, "n/a");
@@ -2179,13 +2267,19 @@ impl App {
 	/// The editor to focus for the dock's or the line's comment box.
 	fn focus_path(&self) -> Option<String> {
 		let c = self.compose.as_ref()?;
-		Some(if matches!(c.kind, ComposeKind::Inline { .. }) { LINE_EDITOR } else { COMPOSER }.to_owned())
+		Some(match c.kind {
+			ComposeKind::Inline { .. } => LINE_EDITOR,
+			ComposeKind::Files => TREE_FILTER,
+			_ => COMPOSER,
+		}
+		.to_owned())
 	}
 
 	fn send(&mut self, text: String) {
 		let Some(c) = self.compose.take() else { return };
 		match c.kind {
 			ComposeKind::ReviewAgent | ComposeKind::ReviewPrompt(_) => {},
+			ComposeKind::Files => self.set_files_filter(&text),
 			ComposeKind::Org => match config::normalize(&text) {
 				Some(org) => {
 					if let Err(e) = config::save_org(&org) {
@@ -2257,6 +2351,9 @@ impl App {
 				self.filter.clear();
 				self.fix_selection();
 			}
+			if kind == ComposeKind::Files {
+				self.set_files_filter("");
+			}
 			// Without an organization there is nothing to go back to.
 			if kind == ComposeKind::Org && self.client.is_none() {
 				return false;
@@ -2276,9 +2373,12 @@ impl App {
 			return true;
 		}
 		c.key(key);
-		if c.kind == ComposeKind::Filter {
-			self.filter = c.draft.clone();
+		let (ckind, draft) = (c.kind, c.draft.clone());
+		if ckind == ComposeKind::Filter {
+			self.filter = draft;
 			self.fix_selection();
+		} else if ckind == ComposeKind::Files {
+			self.set_files_filter(&draft);
 		}
 		false
 	}
@@ -2439,6 +2539,7 @@ impl App {
 		let Some(p) = &mut self.page else { return };
 		let files = p.tab == PrTab::Files;
 		match key.name.as_str() {
+			"escape" if files && p.thread.is_none() && !p.checked.is_empty() => p.checked.clear(),
 			"escape" | "backspace" | "q" => {
 				if p.thread.is_some() {
 					p.thread = None;
@@ -2473,6 +2574,17 @@ impl App {
 			"s" if files => p.split = !p.split,
 			"down" | "j" => self.scroll(1),
 			"up" | "k" => self.scroll(-1),
+			"space" if files => {
+				let i = p.file;
+				self.check_file(i);
+			},
+			"a" if files && key.ctrl => self.check_all(),
+			"F" => self.open_files_filter(),
+			"f" if files && key.shift => self.open_files_filter(),
+			"R" if files => self.open_selection(review::Kind::ReviewFiles),
+			"r" if files && key.shift => self.open_selection(review::Kind::ReviewFiles),
+			"T" if files => self.open_selection(review::Kind::ContextFiles),
+			"t" if files && key.shift => self.open_selection(review::Kind::ContextFiles),
 			"page_down" | "space" | "f" => self.motion(Motion::Screen(1.0)),
 			"page_up" => self.motion(Motion::Screen(-1.0)),
 			"home" => self.scroll(i64::MIN / 2),
@@ -2613,6 +2725,16 @@ impl App {
 			Msg::NavOpen => self.open_nav(),
 			Msg::NavClose => self.nav = None,
 			Msg::Fold(name) => self.fold(name),
+			Msg::Check(i) => self.check_file(i),
+			Msg::CheckDir(dir) => self.check_dir(&dir),
+			Msg::CheckAll => self.check_all(),
+			Msg::CheckClear => {
+				if let Some(p) = &mut self.page {
+					p.checked.clear();
+				}
+			},
+			Msg::FilesFilter => self.open_files_filter(),
+			Msg::FilesFilterClear => self.set_files_filter(""),
 			Msg::RailToggle => {
 				self.rail_hidden = !self.rail_hidden;
 				self.menu = None;
@@ -2634,6 +2756,10 @@ impl App {
 						ComposeKind::Filter => {
 							self.filter = c.draft.clone();
 							self.fix_selection();
+						},
+						ComposeKind::Files => {
+							let text = c.draft.clone();
+							self.set_files_filter(&text);
 						},
 						_ => {},
 					}

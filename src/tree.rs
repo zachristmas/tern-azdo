@@ -18,9 +18,12 @@ struct Dir {
 	files: Vec<(String, usize)>,
 }
 
-fn build(paths: &[&str]) -> Dir {
+fn build(paths: &[&str], keep: &dyn Fn(usize) -> bool) -> Dir {
 	let mut root = Dir::default();
 	for (index, path) in paths.iter().enumerate() {
+		if !keep(index) {
+			continue;
+		}
 		let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
 		let Some((name, dirs)) = parts.split_last() else { continue };
 		let mut at = &mut root;
@@ -59,8 +62,13 @@ fn walk(dir: &Dir, prefix: &str, depth: usize, folded: &HashSet<String>, out: &m
 
 /// The rows to draw, skipping what sits inside folded folders.
 pub fn rows(paths: &[&str], folded: &HashSet<String>) -> Vec<Row> {
+	rows_where(paths, folded, &|_| true)
+}
+
+/// The rows for the files `keep` accepts (by index), the way they would sit in the full tree.
+pub fn rows_where(paths: &[&str], folded: &HashSet<String>, keep: &dyn Fn(usize) -> bool) -> Vec<Row> {
 	let mut out = Vec::new();
-	walk(&build(paths), "", 0, folded, &mut out);
+	walk(&build(paths, keep), "", 0, folded, &mut out);
 	out
 }
 
