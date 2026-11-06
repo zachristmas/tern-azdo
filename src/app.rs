@@ -87,7 +87,8 @@ const CSS: &str = "\
 .nbar{padding-bottom:6px}.rpr.pk,.row.ph.pk{outline:2px solid var(--sf-c-accent);outline-offset:-2px}.row.ph{cursor:pointer}\
 .navpick{position:absolute;top:8px;left:8px;right:8px;bottom:8px;z-index:55;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:12px;background:var(--sf-c-bg,#1e1e22);border:1px solid var(--sf-c-accent);box-shadow:0 12px 40px rgba(0,0,0,.6);font-family:Geist,system-ui,sans-serif}\
 .navpick.wide{left:calc(50% - 380px);right:auto;width:760px;max-width:calc(100% - 16px)}\
-.navpick .nph{display:flex;align-items:center;gap:10px}.navpick .aps{flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--sf-c-accent);font-family:ui-monospace,Consolas,monospace;font-size:14px}\
+.navpick .nph{display:flex;align-items:center;gap:10px}.navpick .aps{display:flex;align-items:center;gap:8px}.navpick .aps .apg{flex:1;min-width:0}.tfr{display:flex;align-items:center;gap:6px}.tfr>:first-child{flex:1;min-width:0}.tfr .aix{cursor:pointer;color:var(--sf-c-muted);padding:2px 8px}\
+.navpick .aps{flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--sf-c-accent);font-family:ui-monospace,Consolas,monospace;font-size:14px}\
 .navpick .npl{flex:1;min-height:0;overflow-y:auto}.navpick .apf{display:flex;font-size:12px}.navpick .aix{cursor:pointer;color:var(--sf-c-muted);padding:2px 8px;font-size:15px}\
 .busy{opacity:.75;cursor:default;color:var(--sf-c-accent)}\
 .aimodal{position:absolute;top:8px;left:8px;right:8px;bottom:8px;z-index:60;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;padding:16px 20px;border-radius:12px;background:var(--sf-c-bg,#1e1e22);border:1px solid var(--sf-c-accent);box-shadow:0 12px 40px rgba(0,0,0,.6);font-family:Geist,system-ui,sans-serif}\
@@ -273,6 +274,8 @@ enum Msg {
 	NavOpen,
 	/// The picker: close it.
 	NavClose,
+	/// The picker: empty the search.
+	NavClear,
 	/// A project in the rail or the picker: fold or unfold it.
 	Fold(String),
 	/// Hide or show the rail.
@@ -2755,6 +2758,7 @@ impl App {
 			Msg::AiCopy => self.ai_copy(),
 			Msg::NavOpen => self.open_nav(),
 			Msg::NavClose => self.nav = None,
+			Msg::NavClear => self.nav_clear(),
 			Msg::Fold(name) => self.fold(name),
 			Msg::Check(i) => self.check_file(i),
 			Msg::CheckDir(dir) => self.check_dir(&dir),
@@ -2765,7 +2769,7 @@ impl App {
 				}
 			},
 			Msg::FilesFilter => self.open_files_filter(),
-			Msg::FilesFilterClear => self.set_files_filter(""),
+			Msg::FilesFilterClear => self.clear_files_filter(),
 			Msg::ViewMenu => {
 				self.view_menu = !self.view_menu;
 				self.menu = None;

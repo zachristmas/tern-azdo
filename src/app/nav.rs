@@ -181,6 +181,11 @@ impl App {
 		self.nav.as_ref().map(|n| n.query.clone())
 	}
 
+	/// Empty the picker's search.
+	pub(super) fn nav_clear(&mut self) {
+		self.search_nav("");
+	}
+
 	/// Open the picker with `text` typed in, on its first pull request.
 	pub(super) fn search_nav(&mut self, text: &str) {
 		self.open_nav();
@@ -316,7 +321,13 @@ impl App {
 			html::div()
 				.key("navpick")
 				.class(if self.cols >= RAIL_MIN_COLS { "navpick wide" } else { "navpick" })
-				.child(html::div().class("nph").child(html::div().class("aps").child(field)).child(html::span("\u{2715}").class("aix").on_click(Msg::NavClose)))
+				.child(html::div().class("nph").child({
+					let mut f = html::div().class("aps").child(html::span("").class("apg").child(field));
+					if !n.query.is_empty() {
+						f = f.child(html::span("\u{2715}").class("aix").title("Clear the search").on_click(Msg::NavClear));
+					}
+					f
+				}).child(html::span("\u{2715}").class("aix").title("Close (Esc)").on_click(Msg::NavClose)))
 				.child(self.topbar())
 				.child(list)
 				.child(html::div().class("apf").child(

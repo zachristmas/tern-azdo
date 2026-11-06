@@ -22,7 +22,10 @@ impl App {
 	pub(super) fn tree_head(&self, p: &Page) -> html::El<Msg> {
 		let editing = self.compose.as_ref().filter(|c| c.kind == ComposeKind::Files);
 		let field: tern_sdk::Node<Msg> = match editing {
-			Some(c) => ui::editor()
+			Some(c) => html::div()
+				.class("tfr")
+				.child(
+					ui::editor()
 				.key("tfed")
 				.text(c.draft.clone())
 				.cursor(c.utf16_cursor())
@@ -31,7 +34,9 @@ impl App {
 				.max_lines(1u32)
 				.on_send(|t| Msg::Send(t.to_owned()))
 				.on_edit(|e| Msg::Edit(e.clone()))
-				.on_focus(Msg::Focus)
+				.on_focus(Msg::Focus),
+				)
+				.child(if c.draft.is_empty() { html::span("") } else { html::span("\u{2715}").class("aix").title("Clear the filter").on_click(Msg::FilesFilterClear) })
 				.into(),
 			None => {
 				let text = p.filter.text().trim();
@@ -149,6 +154,14 @@ impl App {
 			return;
 		}
 		self.compose = Some(Composer::new(ComposeKind::Files, p.filter.text().to_owned()));
+	}
+
+	/// Empty the file filter, and the box too when it is being typed in.
+	pub(super) fn clear_files_filter(&mut self) {
+		if self.compose.as_ref().is_some_and(|c| c.kind == ComposeKind::Files) {
+			self.compose = Some(Composer::new(ComposeKind::Files, String::new()));
+		}
+		self.set_files_filter("");
 	}
 
 	pub(super) fn set_files_filter(&mut self, text: &str) {
