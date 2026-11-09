@@ -417,6 +417,14 @@ impl Client {
 				None => req.call(),
 			};
 			match res {
+				// A token Azure DevOps does not accept can get its HTML sign-in page back (203) instead of a 401.
+				Ok(r) if r.status() == 203 || r.content_type().starts_with("text/html") => {
+					if attempt == 0 {
+						self.auth.invalidate();
+					} else {
+						bail!("Azure DevOps answered with its sign-in page. Run `az login`, or check the saved PAT.");
+					}
+				},
 				Ok(r) => return Ok(r),
 				Err(ureq::Error::Status(401, _)) if attempt == 0 => self.auth.invalidate(),
 				Err(ureq::Error::Status(code, r)) => {
