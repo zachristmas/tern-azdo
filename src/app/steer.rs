@@ -119,7 +119,7 @@ impl App {
 		format!(
 			// Tern's code widget sets its own font size and line height, so they are set on it; the gutters beside it follow the same height.
 			".azfv{{font-size:{t}px}}.aztw{{width:{w}px;min-width:200px;max-width:65%}}.aztr{{height:{h}px}}\
-			 .azds .sf-code{{font-size:{c}px}}.azds .sf-ln{{height:{l}px;line-height:{l}px}}.azgl{{height:{l}px;line-height:{l}px}}",
+			 .azds .azcc .sf-code{{--sf-lh:{l}px;line-height:{l}px;font-size:{c}px}}.azds .sf-ln{{height:{l}px;line-height:{l}px}}.azgl{{height:{l}px;line-height:{l}px}}",
 			t = u.text,
 			w = u.tree,
 			h = (u.text * 2.0).round(),
