@@ -32,6 +32,9 @@ pub struct Config {
 	/// Sizes the user set; left out while they are the defaults.
 	#[serde(default, skip_serializing_if = "is_default_ui")]
 	pub ui:    Ui,
+	/// The agent for every repo that does not pick its own; empty while it is `claude`.
+	#[serde(default, skip_serializing_if = "String::is_empty")]
+	pub agent: String,
 }
 
 fn is_default_ui(u: &Ui) -> bool {
@@ -43,11 +46,33 @@ fn is_default_ui(u: &Ui) -> bool {
 pub struct Review {
 	/// A local checkout of the repo: the agent block starts here.
 	pub dir:     String,
-	/// `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes (else it is appended).
+	/// `claude`, `codex`, `omp` or a command line; `{prompt}` marks where the prompt goes (else it is appended). Empty:
+	/// the default agent.
 	pub agent:   String,
 	/// Prompts that replace the defaults, by kind (`review`, `context`, `explain`, `respond`).
 	#[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
 	pub prompts: std::collections::BTreeMap<String, String>,
+}
+
+impl Review {
+	/// The agent this repo runs: its own, else the default.
+	pub fn agent(&self) -> String {
+		let own = self.agent.trim();
+		if own.is_empty() { default_agent() } else { own.to_owned() }
+	}
+}
+
+/// The agent for every repo that does not pick its own: the saved default, else `claude`.
+pub fn default_agent() -> String {
+	load().map(|c| c.agent).filter(|a| !a.trim().is_empty()).unwrap_or_else(|| crate::review::DEFAULT_AGENT.to_owned())
+}
+
+/// Save the default agent, keeping the rest of the config. Empty (or `claude`) puts `claude` back.
+pub fn save_default_agent(agent: &str) -> anyhow::Result<()> {
+	let agent = agent.trim();
+	let mut config = load().unwrap_or_default();
+	config.agent = if agent == crate::review::DEFAULT_AGENT { String::new() } else { agent.to_owned() };
+	save(&config)
 }
 
 /// The key a repo's review settings are saved under.

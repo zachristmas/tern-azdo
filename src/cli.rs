@@ -46,7 +46,7 @@ fn describe(key: &str, r: &config::Review) -> Value {
 		let custom = r.prompts.get(k.id()).filter(|t| !t.trim().is_empty());
 		prompts.insert(k.id().to_owned(), json!({ "custom": custom.is_some(), "template": custom.map_or(k.default_prompt(), String::as_str) }));
 	}
-	json!({ "repo": key, "dir": r.dir, "agent": if r.agent.is_empty() { review::DEFAULT_AGENT } else { &r.agent }, "prompts": prompts })
+	json!({ "repo": key, "dir": r.dir, "agent": r.agent(), "agent_is_default": r.agent.trim().is_empty(), "prompts": prompts })
 }
 
 /// What can be configured: the prompt kinds, their default templates, the variables, the agent setting and where it is saved.
@@ -57,7 +57,9 @@ pub fn info(_: &Value) -> anyhow::Result<Value> {
 		"repo_key": "project/repo, case-insensitive (the Azure DevOps project name and repo name)",
 		"kinds": kinds,
 		"variables": review::NAMES.split(' ').collect::<Vec<_>>(),
-		"agent": "`claude`, `codex` or a command line; `{prompt}` marks where the prompt goes, else it is appended (default `claude`)",
+		"agent": "`claude`, `codex`, `omp` or a command line; `{prompt}` marks where the prompt goes, else it is appended. A repo without its own agent uses the default agent",
+		"default_agent": config::default_agent(),
+		"agents": review::AGENTS,
 		"dir": "A local checkout of the repo where the agent starts",
 		"note": "Saved to the config file; the plugin reads it each time an AI action opens, so no restart is needed.",
 	}))
@@ -86,11 +88,9 @@ pub fn set(args: &Value) -> anyhow::Result<Value> {
 		}
 		r.dir = dir.to_owned();
 	}
+	// An empty agent means the repo follows the default agent.
 	if let Some(agent) = text(args, "agent") {
-		r.agent = if agent.trim().is_empty() { review::DEFAULT_AGENT.to_owned() } else { agent.trim().to_owned() };
-	}
-	if r.agent.is_empty() {
-		r.agent = review::DEFAULT_AGENT.to_owned();
+		r.agent = agent.trim().to_owned();
 	}
 	// Templates can come from a JSON file (kind to template), so none of their text goes through a shell; `prompts` wins over it.
 	let mut prompts = serde_json::Map::new();
@@ -122,6 +122,14 @@ pub fn set(args: &Value) -> anyhow::Result<Value> {
 	let mut out = describe(&key, &r);
 	out["warnings"] = json!(warnings);
 	Ok(out)
+}
+
+/// The agent for every repo without its own; `agent` sets it, and "" puts `claude` back.
+pub fn default_agent(args: &Value) -> anyhow::Result<Value> {
+	if let Some(agent) = text(args, "agent") {
+		config::save_default_agent(agent)?;
+	}
+	Ok(json!({ "default_agent": config::default_agent(), "agents": review::AGENTS }))
 }
 
 /// The state of the file tree, cut down to what a caller needs: the files shown, which are selected.
@@ -256,6 +264,10 @@ pub fn command(args: &[&str]) -> anyhow::Result<String> {
 		["repos"] | ["repo", "list"] => Ok(pretty(list(&json!({}))?)),
 		["repo", "show", key] => Ok(pretty(get(&json!({ "repo": key }))?)),
 		["repo", "remove", key] => Ok(pretty(remove(&json!({ "repo": key }))?)),
+		["agent"] => Ok(pretty(default_agent(&json!({}))?)),
+		["agent", "--reset"] => Ok(pretty(default_agent(&json!({ "agent": "" }))?)),
+		// `agent omp`, or a whole command line: `agent codex --model x {prompt}`.
+		["agent", rest @ ..] => Ok(pretty(default_agent(&json!({ "agent": rest.join(" ") }))?)),
 		["repo", "set", key, ..] => {
 			let mut a = json!({ "repo": key });
 			for (name, key) in [("dir", "dir"), ("agent", "agent"), ("prompts-file", "prompts_file")] {
@@ -330,15 +342,21 @@ pub fn command(args: &[&str]) -> anyhow::Result<String> {
 			Ok(pretty(if args[0] == "refresh" { refresh(&a)? } else { go(&a)? }))
 		},
 		["open", id] => Ok(pretty(open_pr(&json!({ "pr": id.parse::<u64>().context("the pull request number")? }))?)),
-		_ => bail!("usage: tern-azdo prompts | repos | repo show KEY | repo set KEY [--dir D] [--agent A] | repo prompt KEY KIND [--text T | --stdin | --reset] | repo remove KEY | files [filter TEXT | select [TEXT] [--mode M] | clear] | view [--prs W] [--threads W] [--files] | refresh [--file F] [--line N] | go [--pr N] [--tab T] [--filter F] [--file F] [--line N] [--thread ID] | search TEXT | dismiss | open PR"),
+		_ => bail!("usage: tern-azdo prompts | agent [NAME | --reset] | repos | repo show KEY | repo set KEY [--dir D] [--agent A] | repo prompt KEY KIND [--text T | --stdin | --reset] | repo remove KEY | files [filter TEXT | select [TEXT] [--mode M] | clear] | view [--prs W] [--threads W] [--files] | refresh [--file F] [--line N] | go [--pr N] [--tab T] [--filter F] [--file F] [--line N] [--thread ID] | search TEXT | dismiss | open PR"),
 	}
 }
 
 /// The tools the MCP server offers: name, description, JSON schema of the arguments, and the operation.
 type Tool = (&'static str, &'static str, fn() -> Value, fn(&Value) -> anyhow::Result<Value>);
 
-const TOOLS: [Tool; 14] = [
+const TOOLS: [Tool; 15] = [
 	("azdo_ai_info", "What can be configured for the AI actions in tern-azdo: prompt kinds with their default templates, the template variables, the agent setting. Read this first.", || json!({ "type": "object", "properties": {} }), info),
+	(
+		"azdo_ai_default_agent",
+		"Show or set the default agent: the one every repo without its own agent runs for Review with AI, Add as context and the other AI actions. Omit `agent` to read it; \"\" puts claude back.",
+		|| json!({ "type": "object", "properties": { "agent": { "type": "string", "description": "claude, codex, omp, or a command line with an optional {prompt}" } } }),
+		default_agent,
+	),
 	("azdo_ai_repos", "List the repos that have saved AI settings, with their effective prompts.", || json!({ "type": "object", "properties": {} }), list),
 	("azdo_ai_repo_get", "One repo's checkout folder, agent and effective prompt templates (a default is reported with custom=false).", || json!({ "type": "object", "properties": { "repo": { "type": "string", "description": "project/repo" } }, "required": ["repo"] }), get),
 	(
@@ -348,7 +366,7 @@ const TOOLS: [Tool; 14] = [
 			json!({ "type": "object", "properties": {
 				"repo": { "type": "string", "description": "project/repo" },
 				"dir": { "type": "string", "description": "local checkout folder" },
-				"agent": { "type": "string", "description": "claude, codex, or a command line with an optional {prompt}" },
+				"agent": { "type": "string", "description": "claude, codex, omp, or a command line with an optional {prompt}; \"\" follows the default agent" },
 				"prompts": { "type": "object", "description": "kind (see azdo_ai_info) to template", "additionalProperties": { "type": "string" } },
 				"prompts_file": { "type": "string", "description": "path to a JSON file of kind to template; use it for long templates or ones with | < > or quotes, so none of the text goes through a shell" }
 			}, "required": ["repo"] })

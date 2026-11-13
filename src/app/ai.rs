@@ -91,7 +91,7 @@ impl AiModal {
 		self.section = section;
 		self.editor = match section {
 			Section::Template => Some(Composer::new(ComposeKind::ReviewPrompt(self.kind), self.template())),
-			Section::Agent => Some(Composer::new(ComposeKind::ReviewAgent, self.settings.agent.clone())),
+			Section::Agent => Some(Composer::new(ComposeKind::ReviewAgent, self.settings.agent())),
 			_ => None,
 		};
 		if section == Section::Folder {
@@ -289,7 +289,11 @@ impl App {
 					m.settings.prompts.insert(m.kind.id().to_owned(), text.trim_end().to_owned());
 				}
 			},
-			Section::Agent => m.settings.agent = if text.trim().is_empty() { review::DEFAULT_AGENT.into() } else { text.trim().to_owned() },
+			// An agent equal to the default is not saved, so the repo follows the default when it changes.
+			Section::Agent => {
+				let agent = text.trim();
+				m.settings.agent = if agent.is_empty() || agent == config::default_agent() { String::new() } else { agent.to_owned() };
+			},
 			_ => return,
 		}
 		if self.ai_persist()
@@ -322,6 +326,23 @@ impl App {
 		{
 			m.enter(Section::Template);
 			self.note = "back to the default prompt".into();
+		}
+	}
+
+	/// Make `text` the agent for every repo that does not pick its own, and let this repo follow it.
+	pub(super) fn ai_default_agent(&mut self, text: String) {
+		if let Err(e) = config::save_default_agent(&text) {
+			self.note = format!("could not save the default agent: {e}");
+			return;
+		}
+		if let Some(m) = &mut self.ai {
+			m.settings.agent.clear();
+		}
+		if self.ai_persist()
+			&& let Some(m) = &mut self.ai
+		{
+			m.enter(Section::Preview);
+			self.note = format!("{} is now the default agent", config::default_agent());
 		}
 	}
 
@@ -385,7 +406,7 @@ impl App {
 				return;
 			},
 		};
-		let result = review::launch(m.settings.dir.trim(), &review::argv(&m.settings.agent, &arg));
+		let result = review::launch(m.settings.dir.trim(), &review::argv(&m.settings.agent(), &arg));
 		match result {
 			Ok(msg) => {
 				self.ai_run.insert(run_key(req.kind, req.thread), Instant::now());
@@ -482,7 +503,7 @@ impl App {
 		let summary = html::div()
 			.class("aisum")
 			.child(setting("Folder", if m.dir_ok() { m.settings.dir.trim().to_owned() } else { "not set".to_owned() }, m.dir_ok(), "Change", Section::Folder))
-			.child(setting("Agent", m.settings.agent.clone(), true, "Change", Section::Agent))
+			.child(setting("Agent", if m.settings.agent.trim().is_empty() { format!("{} (default)", m.settings.agent()) } else { m.settings.agent.trim().to_owned() }, true, "Change", Section::Agent))
 			.child(setting(
 				"Template",
 				if m.settings.prompts.contains_key(m.kind.id()) { "custom for this repo".to_owned() } else { "default".to_owned() },
@@ -531,11 +552,21 @@ impl App {
 			},
 			Section::Agent => {
 				body = body.child(html::div().class("apt").child(html::span(format!("The agent for {repo}"))));
-				body = body.child(html::div().class("dim aph").child(html::span("claude, codex, or a command line; {prompt} marks where the prompt goes (else it is the last argument)")));
+				body = body.child(html::div().class("dim aph").child(html::span(format!(
+					"claude, codex, omp, or a command line; {{prompt}} marks where the prompt goes (else it is the last argument). Repos without their own agent use the default, {}.",
+					config::default_agent()
+				))));
+				let current = m.editor.as_ref().map_or_else(|| m.settings.agent(), |c| c.draft.trim().to_owned());
+				let mut choices = html::div().class("aif");
+				for name in review::AGENTS {
+					choices = choices.child(btn(name, current == name, Msg::AiSend(name.to_owned())));
+				}
+				body = body.child(choices);
 				body = body.children(editor(2));
 				foot = foot
-					.child(html::span("Enter saves").class("dim"))
+					.child(html::span("Enter saves for this repo").class("dim"))
 					.child(btn("Back", false, Msg::AiSection(Section::Preview)))
+					.child(btn("Use for every repo", false, Msg::AiAgentDefault))
 					.child(btn("Save agent", true, Msg::AiSave));
 			},
 			Section::Folder => {

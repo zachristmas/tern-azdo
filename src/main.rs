@@ -79,7 +79,7 @@ fn main() -> anyhow::Result<()> {
 			Ok(())
 		},
 		["mcp"] => cli::serve(),
-		["prompts" | "repos" | "files" | "open" | "view" | "go" | "refresh" | "search" | "dismiss", ..] | ["repo", ..] => {
+		["prompts" | "agent" | "repos" | "files" | "open" | "view" | "go" | "refresh" | "search" | "dismiss", ..] | ["repo", ..] => {
 			let words: Vec<&str> = args.iter().map(String::as_str).collect();
 			println!("{}", cli::command(&words)?);
 			Ok(())
@@ -103,7 +103,7 @@ fn main() -> anyhow::Result<()> {
 			Ok(())
 		},
 		_ => {
-			eprintln!("usage: tern-azdo [--demo | list [review|mine|all] | org [ORG] | prompts | repos | repo ... | mcp | pat [--forget]]");
+			eprintln!("usage: tern-azdo [--demo | list [review|mine|all] | org [ORG] | prompts | agent [NAME | --reset] | repos | repo ... | mcp | pat [--forget]]");
 			std::process::exit(2);
 		},
 	}
