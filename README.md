@@ -66,6 +66,8 @@ Sort by newest or oldest and the list runs across every project at once. With th
 
 **See it before it runs.** Every one of those opens a confirmation first. It shows exactly what the agent will be told, with the PR's real description, files and comments filled in, plus the folder it will run in, the agent and the template, each with a Change or Edit link. Enter starts it, Esc closes it, and Copy prompt (`C`) puts the filled-in prompt on the clipboard instead, for pasting into an agent that is already running.
 
+**Pick the agent.** Claude Code runs by default. Change the agent in that confirmation to pick claude, codex or omp with one click, or type any command line. The choice applies to that repo; Use for every repo makes it the default, which every repo without its own agent follows. From the command line, `tern-azdo agent omp` sets the default and `tern-azdo agent --reset` puts claude back.
+
 <p align="center"><img src="docs/ai-confirm.png" alt="The confirmation modal: the filled-in prompt, with the checkout folder, agent and template above it and a Start agent button" width="900"></p>
 
 **A template per kind, per repo.** Edit lets you rewrite the template with the filled-in result live underneath. Every kind (review, context, explain, respond, explain code, review code) starts from a default that runs `git fetch`, reads the diff and the code, and reports without touching anything, so most people never change it. The variables are `{id} {title} {url} {project} {repo} {source} {target} {author} {description} {files} {comments}`, plus `{thread} {file} {line} {comment} {code}` for comment and line prompts. A template you never changed is not saved, so better defaults reach you. The gear (`I`) opens the same editor without starting anything.
@@ -118,6 +120,7 @@ tern-azdo list [review|mine|all]  active pull requests as a table
 tern-azdo org [ORG]               show or set the organization
 tern-azdo pat [--forget]          save (from stdin) or remove a personal access token
 tern-azdo prompts                 the prompt kinds, default templates and variables, as JSON
+tern-azdo agent [NAME | --reset]  show or set the default agent (claude, codex, omp or a command line)
 tern-azdo repos                   every repo with saved AI settings
 tern-azdo repo show KEY           one repo's folder, agent and effective prompts
 tern-azdo repo set KEY [--dir D] [--agent A]
@@ -136,7 +139,7 @@ Outside Tern, `tern-azdo list` prints a plain-text table, so it works in scripts
 
 ### Configuring the AI actions from an agent
 
-`KEY` is `project/repo`, case-insensitive. The `repo` commands print JSON, and `repo set` and `repo prompt` warn about template variables that do not exist and folders that are missing. A template equal to the default is not saved, so defaults can still improve. The plugin reads the config each time an AI action opens, so changes apply without a restart.
+`KEY` is `project/repo`, case-insensitive. The `repo` commands print JSON, and `repo set` and `repo prompt` warn about template variables that do not exist and folders that are missing. A template equal to the default is not saved, so defaults can still improve. In the same way, a repo whose agent is empty (`repo set KEY --agent ""`) runs the default agent. The plugin reads the config each time an AI action opens, so changes apply without a restart.
 
 Everything is saved in `config.json` (`%APPDATA%	ern-azdo` on Windows, `~/.config/tern-azdo` elsewhere), next to nothing else of Tern's. For long templates, or ones with `|`, `<`, `>` or quotes that a shell would mangle, pass `prompts_file` to `azdo_ai_repo_set` (or `--prompts-file` to `repo set`): a JSON file of kind to template. A prompt over 20,000 characters (a big PR with long threads) would not fit a Windows command line, so the agent is started with a short message that points at a file in the temp folder holding it, and the confirmation says so.
 
@@ -146,7 +149,7 @@ To give an agent the same operations as tools, add the server to its MCP config:
 { "mcpServers": { "tern-azdo": { "command": "tern-azdo", "args": ["mcp"] } } }
 ```
 
-The settings tools are `azdo_ai_info` (read this first), `azdo_ai_repos`, `azdo_ai_repo_get`, `azdo_ai_repo_set` and `azdo_ai_repo_remove`.
+The settings tools are `azdo_ai_info` (read this first), `azdo_ai_default_agent`, `azdo_ai_repos`, `azdo_ai_repo_get`, `azdo_ai_repo_set` and `azdo_ai_repo_remove`.
 
 ### Driving the view from an agent
 

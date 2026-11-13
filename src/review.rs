@@ -3,7 +3,11 @@
 
 use std::path::Path;
 
+/// The agent when neither the repo nor the default picks one.
 pub const DEFAULT_AGENT: &str = "claude";
+
+/// The agents the AI settings offer by name. Any other command line works too.
+pub const AGENTS: [&str; 3] = ["claude", "codex", "omp"];
 
 /// What the agent is asked to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,7 +255,7 @@ pub fn for_launch(prompt: &str, tag: &str) -> anyhow::Result<(String, bool)> {
 }
 
 /// The program and arguments for an agent setting: a command line split on spaces, with `{prompt}` replaced by the
-/// prompt (one argument) or the prompt appended. `claude` and `codex` take the prompt as their first argument.
+/// prompt (one argument) or the prompt appended. `claude`, `codex` and `omp` take the prompt as their first argument.
 pub fn argv(agent: &str, prompt: &str) -> Vec<String> {
 	let mut parts: Vec<String> = agent.split_whitespace().map(str::to_owned).collect();
 	if parts.is_empty() {

@@ -308,6 +308,8 @@ enum Msg {
 	AiSave,
 	/// The AI modal: put the template back to the default.
 	AiReset,
+	/// The AI modal: make the agent being edited the default for every repo.
+	AiAgentDefault,
 	/// The AI modal: open a folder in the folder field.
 	AiPickGo(std::path::PathBuf),
 	/// The AI modal: use the folder the field would.
@@ -1436,7 +1438,7 @@ impl App {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
-				ComposeKind::ReviewAgent => "Agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
+				ComposeKind::ReviewAgent => "Agent: claude, codex, omp, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
 				ComposeKind::ReviewPrompt(k) => format!("The {} prompt for this repo (Enter saves, Shift+Enter new line, Ctrl+P preview, Esc cancels)", k.label()),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
 				ComposeKind::Files => String::new(),
@@ -2200,11 +2202,8 @@ impl App {
 	fn review_settings(&self) -> Option<(String, config::Review)> {
 		let repo = &self.page.as_ref()?.pr.repository;
 		let key = config::repo_key(&repo.project.name, &repo.name);
-		let mut r = config::review(&key).unwrap_or_default();
-		if r.agent.trim().is_empty() {
-			r.agent = review::DEFAULT_AGENT.into();
-		}
-		Some((key, r))
+		let review = config::review(&key).unwrap_or_default();
+		Some((key, review))
 	}
 
 	/// What a prompt can use: the open PR, and for the comment prompts one thread (the given one, else the selected one,
@@ -2756,6 +2755,11 @@ impl App {
 				}
 			},
 			Msg::AiReset => self.ai_reset(),
+			Msg::AiAgentDefault => {
+				if let Some(text) = self.ai.as_ref().and_then(|m| m.editor_text()) {
+					self.ai_default_agent(text);
+				}
+			},
 			Msg::AiPickGo(path) => self.ai_pick_go(&path),
 			Msg::AiPickUse => self.ai_pick_use(),
 			Msg::AiStart => self.ai_start(),
