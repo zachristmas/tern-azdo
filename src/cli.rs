@@ -46,7 +46,7 @@ fn describe(key: &str, r: &config::Review) -> Value {
 		let custom = r.prompts.get(k.id()).filter(|t| !t.trim().is_empty());
 		prompts.insert(k.id().to_owned(), json!({ "custom": custom.is_some(), "template": custom.map_or(k.default_prompt(), String::as_str) }));
 	}
-	json!({ "repo": key, "dir": r.dir, "agent": if r.agent.is_empty() { review::DEFAULT_AGENT } else { &r.agent }, "prompts": prompts })
+	json!({ "repo": key, "dir": r.dir, "agent": if r.agent.is_empty() { review::default_agent() } else { &r.agent }, "prompts": prompts })
 }
 
 /// What can be configured: the prompt kinds, their default templates, the variables, the agent setting and where it is saved.
@@ -57,7 +57,7 @@ pub fn info(_: &Value) -> anyhow::Result<Value> {
 		"repo_key": "project/repo, case-insensitive (the Azure DevOps project name and repo name)",
 		"kinds": kinds,
 		"variables": review::NAMES.split(' ').collect::<Vec<_>>(),
-		"agent": "`claude`, `codex` or a command line; `{prompt}` marks where the prompt goes, else it is appended (default `claude`)",
+		"agent": "`omp`, `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes, else it is appended (default `omp` when it is on the PATH, else `claude`)",
 		"dir": "A local checkout of the repo where the agent starts",
 		"note": "Saved to the config file; the plugin reads it each time an AI action opens, so no restart is needed.",
 	}))
@@ -87,10 +87,10 @@ pub fn set(args: &Value) -> anyhow::Result<Value> {
 		r.dir = dir.to_owned();
 	}
 	if let Some(agent) = text(args, "agent") {
-		r.agent = if agent.trim().is_empty() { review::DEFAULT_AGENT.to_owned() } else { agent.trim().to_owned() };
+		r.agent = if agent.trim().is_empty() { review::default_agent().to_owned() } else { agent.trim().to_owned() };
 	}
 	if r.agent.is_empty() {
-		r.agent = review::DEFAULT_AGENT.to_owned();
+		r.agent = review::default_agent().to_owned();
 	}
 	// Templates can come from a JSON file (kind to template), so none of their text goes through a shell; `prompts` wins over it.
 	let mut prompts = serde_json::Map::new();
@@ -348,7 +348,7 @@ const TOOLS: [Tool; 14] = [
 			json!({ "type": "object", "properties": {
 				"repo": { "type": "string", "description": "project/repo" },
 				"dir": { "type": "string", "description": "local checkout folder" },
-				"agent": { "type": "string", "description": "claude, codex, or a command line with an optional {prompt}" },
+				"agent": { "type": "string", "description": "omp, claude, codex, or a command line with an optional {prompt}" },
 				"prompts": { "type": "object", "description": "kind (see azdo_ai_info) to template", "additionalProperties": { "type": "string" } },
 				"prompts_file": { "type": "string", "description": "path to a JSON file of kind to template; use it for long templates or ones with | < > or quotes, so none of the text goes through a shell" }
 			}, "required": ["repo"] })

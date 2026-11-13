@@ -43,7 +43,7 @@ fn is_default_ui(u: &Ui) -> bool {
 pub struct Review {
 	/// A local checkout of the repo: the agent block starts here.
 	pub dir:     String,
-	/// `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes (else it is appended).
+	/// `omp`, `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes (else it is appended).
 	pub agent:   String,
 	/// Prompts that replace the defaults, by kind (`review`, `context`, `explain`, `respond`).
 	#[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]

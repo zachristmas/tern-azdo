@@ -1436,7 +1436,7 @@ impl App {
 			let file = self.page.as_ref().and_then(Page::change).map(|c| c.path().rsplit('/').next().unwrap_or_default().to_owned()).unwrap_or_default();
 			let placeholder: String = match c.kind {
 				ComposeKind::Org => "Organization, e.g. Contoso or https://dev.azure.com/Contoso (Enter saves)".into(),
-				ComposeKind::ReviewAgent => "Agent: claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
+				ComposeKind::ReviewAgent => "Agent: omp, claude, codex, or a command line with {prompt} where the prompt goes (Enter saves, Esc cancels)".into(),
 				ComposeKind::ReviewPrompt(k) => format!("The {} prompt for this repo (Enter saves, Shift+Enter new line, Ctrl+P preview, Esc cancels)", k.label()),
 				ComposeKind::Filter => "Filter by title, author, repo, branch or id (Enter keeps, Esc clears)".into(),
 				ComposeKind::Files => String::new(),
@@ -2202,7 +2202,7 @@ impl App {
 		let key = config::repo_key(&repo.project.name, &repo.name);
 		let mut r = config::review(&key).unwrap_or_default();
 		if r.agent.trim().is_empty() {
-			r.agent = review::DEFAULT_AGENT.into();
+			r.agent = review::default_agent().into();
 		}
 		Some((key, r))
 	}
