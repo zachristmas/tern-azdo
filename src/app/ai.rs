@@ -553,7 +553,7 @@ impl App {
 			Section::Agent => {
 				body = body.child(html::div().class("apt").child(html::span(format!("The agent for {repo}"))));
 				body = body.child(html::div().class("dim aph").child(html::span(format!(
-					"claude, codex, omp, or a command line; {{prompt}} marks where the prompt goes (else it is the last argument). Repos without their own agent use the default, {}.",
+					"omp, claude, codex, or a command line; {{prompt}} marks where the prompt goes (else it is the last argument). Repos without their own agent use the default, {}.",
 					config::default_agent()
 				))));
 				let current = m.editor.as_ref().map_or_else(|| m.settings.agent(), |c| c.draft.trim().to_owned());

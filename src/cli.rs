@@ -57,7 +57,7 @@ pub fn info(_: &Value) -> anyhow::Result<Value> {
 		"repo_key": "project/repo, case-insensitive (the Azure DevOps project name and repo name)",
 		"kinds": kinds,
 		"variables": review::NAMES.split(' ').collect::<Vec<_>>(),
-		"agent": "`claude`, `codex`, `omp` or a command line; `{prompt}` marks where the prompt goes, else it is appended. A repo without its own agent uses the default agent",
+		"agent": "`omp`, `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes, else it is appended. A repo without its own agent uses the default agent",
 		"default_agent": config::default_agent(),
 		"agents": review::AGENTS,
 		"dir": "A local checkout of the repo where the agent starts",
@@ -124,7 +124,7 @@ pub fn set(args: &Value) -> anyhow::Result<Value> {
 	Ok(out)
 }
 
-/// The agent for every repo without its own; `agent` sets it, and "" puts `claude` back.
+/// The agent for every repo without its own; `agent` sets it, and "" puts the built-in default back.
 pub fn default_agent(args: &Value) -> anyhow::Result<Value> {
 	if let Some(agent) = text(args, "agent") {
 		config::save_default_agent(agent)?;
@@ -354,7 +354,7 @@ const TOOLS: [Tool; 15] = [
 	(
 		"azdo_ai_default_agent",
 		"Show or set the default agent: the one every repo without its own agent runs for Review with AI, Add as context and the other AI actions. Omit `agent` to read it; \"\" puts claude back.",
-		|| json!({ "type": "object", "properties": { "agent": { "type": "string", "description": "claude, codex, omp, or a command line with an optional {prompt}" } } }),
+		|| json!({ "type": "object", "properties": { "agent": { "type": "string", "description": "omp, claude, codex, or a command line with an optional {prompt}" } } }),
 		default_agent,
 	),
 	("azdo_ai_repos", "List the repos that have saved AI settings, with their effective prompts.", || json!({ "type": "object", "properties": {} }), list),
@@ -366,7 +366,7 @@ const TOOLS: [Tool; 15] = [
 			json!({ "type": "object", "properties": {
 				"repo": { "type": "string", "description": "project/repo" },
 				"dir": { "type": "string", "description": "local checkout folder" },
-				"agent": { "type": "string", "description": "claude, codex, omp, or a command line with an optional {prompt}; \"\" follows the default agent" },
+				"agent": { "type": "string", "description": "omp, claude, codex, or a command line with an optional {prompt}; \"\" follows the default agent" },
 				"prompts": { "type": "object", "description": "kind (see azdo_ai_info) to template", "additionalProperties": { "type": "string" } },
 				"prompts_file": { "type": "string", "description": "path to a JSON file of kind to template; use it for long templates or ones with | < > or quotes, so none of the text goes through a shell" }
 			}, "required": ["repo"] })

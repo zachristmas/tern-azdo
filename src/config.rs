@@ -46,7 +46,7 @@ fn is_default_ui(u: &Ui) -> bool {
 pub struct Review {
 	/// A local checkout of the repo: the agent block starts here.
 	pub dir:     String,
-	/// `claude`, `codex`, `omp` or a command line; `{prompt}` marks where the prompt goes (else it is appended). Empty:
+	/// `omp`, `claude`, `codex` or a command line; `{prompt}` marks where the prompt goes (else it is appended). Empty:
 	/// the default agent.
 	pub agent:   String,
 	/// Prompts that replace the defaults, by kind (`review`, `context`, `explain`, `respond`).
@@ -62,16 +62,16 @@ impl Review {
 	}
 }
 
-/// The agent for every repo that does not pick its own: the saved default, else `claude`.
+/// The agent for every repo that does not pick its own: the saved default, else `omp` when it is on the PATH, else `claude`.
 pub fn default_agent() -> String {
-	load().map(|c| c.agent).filter(|a| !a.trim().is_empty()).unwrap_or_else(|| crate::review::DEFAULT_AGENT.to_owned())
+	load().map(|c| c.agent).filter(|a| !a.trim().is_empty()).unwrap_or_else(|| crate::review::default_agent().to_owned())
 }
 
-/// Save the default agent, keeping the rest of the config. Empty (or `claude`) puts `claude` back.
+/// Save the default agent, keeping the rest of the config. Empty (or the built-in default) puts the built-in default back.
 pub fn save_default_agent(agent: &str) -> anyhow::Result<()> {
 	let agent = agent.trim();
 	let mut config = load().unwrap_or_default();
-	config.agent = if agent == crate::review::DEFAULT_AGENT { String::new() } else { agent.to_owned() };
+	config.agent = if agent == crate::review::default_agent() { String::new() } else { agent.to_owned() };
 	save(&config)
 }
 

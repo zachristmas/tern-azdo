@@ -21,9 +21,9 @@ Reviewing in Azure DevOps usually means a browser tab per pull request. tern-azd
 
 ## Features
 
-**One navigator for the organization.** A rail of PR cards sits beside the open pull request and never goes away, so any PR is one click from any other. Each card has the whole title, the PR id, author, age, vote counts and your own vote, grouped by project. Four dropdowns across the top filter it everywhere: Show (reviewing, created by me, all active), Project, Status (ready, draft, approved, blocked) and Sort (by project, newest first, oldest first, across every project). `[` and `]` step to the previous and next PR. Each project folds: click its header to collapse it.
+**One navigator for the organization.** A rail of PR cards sits beside the open pull request and never goes away, so any PR is one click from any other. Each card has the whole title, the PR id, author, age, vote counts and your own vote, grouped by project. Five dropdowns across the top filter it everywhere: Show (reviewing, created by me, all active), Project, Repo (the repos in the chosen project), Status (ready, draft, approved, blocked) and Sort (by project, newest first, oldest first, across every project). `[` and `]` step to the previous and next PR. Each project folds: click its header to collapse it.
 
-**A picker for narrow panes.** Below about 110 columns, or when you hide the sidebar with the button at the top left, the rail gives way to the PR at full width with a compact bar above it: a Pull requests button, and previous and next. The button (or `Ctrl+K`, anywhere) opens the picker: a search field over a scrollable list of the same cards, with the same Show, Project, Status and Sort filters. Type to search by title, author, repo, branch or id, `↑↓` cycle through the list (wrapping), `←→` collapse and expand the project you are in, and Enter opens. Esc on a narrow PR comes back to the picker. The width is read from the pane, and a narrow pane starts in the picker.
+**A picker for narrow panes.** Below about 110 columns, or when you hide the sidebar with the button at the top left, the rail gives way to the PR at full width with a compact bar above it: a Pull requests button, and previous and next. The button (or `Ctrl+K`, anywhere) opens the picker: a search field over a scrollable list of the same cards, with the same Show, Project, Repo, Status and Sort filters. Type to search by title, author, repo, branch or id, `↑↓` cycle through the list (wrapping), `←→` collapse and expand the project you are in, and Enter opens. Esc on a narrow PR comes back to the picker. The width is read from the pane, and a narrow pane starts in the picker.
 
 <p align="center"><img src="docs/picker.png" alt="The picker open over the PR: a search field, the filters, and the pull requests grouped by project with Platform collapsed" width="900"></p>
 
@@ -60,13 +60,13 @@ Sort by newest or oldest and the list runs across every project at once. With th
 
 **Your agent can drive it.** Anything you can do by hand an agent can do in front of you over MCP or the command line: open a pull request, jump to a comment on the overview or on the diff, to a file or a line, filter the tree to `*.config` changes, tick files, or put a search into the picker. It can read what you are looking at and list the PRs, files and comments to choose from, so a loose request ("show me the config changes in the ledger PR") turns into a few calls. See below.
 
-**Review with AI.** Two buttons at the top of every PR start a coding agent in a new Tern block, beside the plugin, in your local checkout of that repo: Review with AI (`i`) asks for a review of the diff, and Add as context (`t`) has it read the PR and wait for your questions. On a comment thread, Explain (`e`) and Respond with AI (`w`) ask the agent to explain the comment or draft a reply. Click a line number in the diff and the comment box has Explain with AI and Review with AI for that line, with the code around it and anything you have typed so far. Nothing is posted to the PR; the agent only reads and answers.
+**Review with AI.** Two buttons at the top of every PR start a coding agent in a new Tern block, beside the plugin, in your local checkout of that repo: Review with AI (`i`) asks for a review of the diff, and Add as context (`t`) has it read the PR and wait for your questions. On a comment thread, Explain (`e`) and Respond with AI (`w`) ask the agent to explain the comment or draft a reply. Click a line number in the diff and the comment box has Explain with AI and Review with AI for that line, with the code around it and anything you have typed so far. Nothing is posted to the PR; the agent only reads and answers. The agent is `omp` when it is on the PATH, else Claude Code (`claude`); you can set another per repo.
 
 <p align="center"><img src="docs/ai-line.png" alt="The comment box under a diff line, with Explain with AI and Review with AI beside Cancel and Comment" width="900"></p>
 
 **See it before it runs.** Every one of those opens a confirmation first. It shows exactly what the agent will be told, with the PR's real description, files and comments filled in, plus the folder it will run in, the agent and the template, each with a Change or Edit link. Enter starts it, Esc closes it, and Copy prompt (`C`) puts the filled-in prompt on the clipboard instead, for pasting into an agent that is already running.
 
-**Pick the agent.** Claude Code runs by default. Change the agent in that confirmation to pick claude, codex or omp with one click, or type any command line. The choice applies to that repo; Use for every repo makes it the default, which every repo without its own agent follows. From the command line, `tern-azdo agent omp` sets the default and `tern-azdo agent --reset` puts claude back.
+**Pick the agent.** `omp` runs by default when it is on the PATH, else Claude Code. Change the agent in that confirmation to pick omp, claude or codex with one click, or type any command line. The choice applies to that repo; Use for every repo makes it the default, which every repo without its own agent follows. From the command line, `tern-azdo agent omp` sets the default and `tern-azdo agent --reset` puts the built-in default back.
 
 <p align="center"><img src="docs/ai-confirm.png" alt="The confirmation modal: the filled-in prompt, with the checkout folder, agent and template above it and a Start agent button" width="900"></p>
 
@@ -120,7 +120,7 @@ tern-azdo list [review|mine|all]  active pull requests as a table
 tern-azdo org [ORG]               show or set the organization
 tern-azdo pat [--forget]          save (from stdin) or remove a personal access token
 tern-azdo prompts                 the prompt kinds, default templates and variables, as JSON
-tern-azdo agent [NAME | --reset]  show or set the default agent (claude, codex, omp or a command line)
+tern-azdo agent [NAME | --reset]  show or set the default agent (omp, claude, codex or a command line)
 tern-azdo repos                   every repo with saved AI settings
 tern-azdo repo show KEY           one repo's folder, agent and effective prompts
 tern-azdo repo set KEY [--dir D] [--agent A]
