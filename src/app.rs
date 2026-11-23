@@ -237,6 +237,8 @@ enum Msg {
 	Menu(Menu),
 	/// The project filter in the top bar (None: every project).
 	Project(Option<String>),
+	/// The repo filter in the top bar, by repo id (None: every repo).
+	Repo(Option<String>),
 	/// The status filter in the top bar.
 	Status(String),
 	/// The sort order in the top bar.
@@ -362,6 +364,7 @@ impl SortMode {
 enum Menu {
 	Show,
 	Project,
+	Repo,
 	Status,
 	Sort,
 }
@@ -738,6 +741,8 @@ struct App {
 	sel:     Option<u32>,
 	/// The project filter (None: every project).
 	project: Option<String>,
+	/// The repo filter, by repo id (None: every repo).
+	repo:    Option<String>,
 	/// The open dropdown in the top bar.
 	menu:    Option<Menu>,
 	status:  StatusFilter,
@@ -1073,6 +1078,7 @@ impl App {
 			filter: String::new(),
 			sel: None,
 			project: None,
+			repo: None,
 			menu: None,
 			status: StatusFilter::Any,
 			sort: SortMode::Project,
@@ -1158,6 +1164,7 @@ impl App {
 			.filter(|p| self.in_tab(p, self.tab))
 			.filter(|p| self.status.matches(p))
 			.filter(|p| self.project.as_ref().is_none_or(|n| *n == p.repository.project.name))
+			.filter(|p| self.repo.as_ref().is_none_or(|id| *id == p.repository.id))
 			.filter(|p| {
 				needle.is_empty()
 					|| [p.title.as_str(), p.created_by.display_name.as_str(), p.repository.name.as_str(), p.repository.project.name.as_str(), p.source()]
@@ -1196,6 +1203,13 @@ impl App {
 			&& !self.prs.iter().any(|p| self.in_tab(p, self.tab) && self.status.matches(p) && p.repository.project.name == n)
 		{
 			self.project = None;
+		}
+		// The same for a repo filter, which also drops when the project filter leaves its repo out.
+		if let Some(id) = self.repo.clone()
+			&& !self.prs.iter().any(|p| {
+				self.in_tab(p, self.tab) && self.status.matches(p) && self.project.as_ref().is_none_or(|n| *n == p.repository.project.name) && p.repository.id == id
+			}) {
+			self.repo = None;
 		}
 		let ids = self.ids();
 		if !self.sel.is_some_and(|s| ids.contains(&s)) {
@@ -1518,7 +1532,8 @@ impl App {
 		s.child(ui::seg(*keys).side(Side::Right).tone(Tone::Muted))
 	}
 
-	/// The global filters as three dropdowns: which PRs (Reviewing, Created by me, All active), which project, which status.
+	/// The global filters as dropdowns: which PRs (Reviewing, Created by me, All active), which project, which repo, which
+	/// status, and the sort order.
 	fn topbar(&self) -> html::El<Msg> {
 		// A dropdown: its button (what is picked now), and when open its menu of (label, count, picked, click) items.
 		let dd = |kind: Menu, title: &str, value: String, items: Vec<(String, Option<usize>, bool, Msg)>| {
@@ -1558,6 +1573,20 @@ impl App {
 			let count = pool.iter().filter(|p| p.repository.project.name == n).count();
 			project_items.push((n.to_owned(), Some(count), self.project.as_deref() == Some(n), Msg::Project(Some(n.to_owned()))));
 		}
+		// Repos within the picked project. A name shared by repos in different projects carries its project.
+		let repo_pool: Vec<&Pr> = pool.iter().copied().filter(|p| self.project.as_ref().is_none_or(|n| *n == p.repository.project.name)).collect();
+		let mut repos: Vec<&api::Repo> = repo_pool.iter().map(|p| &p.repository).collect();
+		repos.sort_by_key(|r| (r.name.to_lowercase(), r.project.name.to_lowercase()));
+		repos.dedup_by(|a, b| a.id == b.id);
+		let repo_label = |r: &api::Repo| {
+			if repos.iter().filter(|o| o.name == r.name).count() > 1 { format!("{} ({})", r.name, r.project.name) } else { r.name.clone() }
+		};
+		let mut repo_items = vec![("All repos".to_owned(), Some(repo_pool.len()), self.repo.is_none(), Msg::Repo(None))];
+		for r in &repos {
+			let count = repo_pool.iter().filter(|p| p.repository.id == r.id).count();
+			repo_items.push((repo_label(r), Some(count), self.repo.as_deref() == Some(r.id.as_str()), Msg::Repo(Some(r.id.clone()))));
+		}
+		let repo_value = self.repo.as_ref().and_then(|id| repos.iter().find(|r| r.id == *id)).map_or_else(|| "All repos".to_owned(), |r| repo_label(r));
 		let status_items: Vec<_> = StatusFilter::ALL.iter().map(|f| (f.label().to_owned(), None, *f == self.status, Msg::Status(f.id().to_owned()))).collect();
 		let sort_items: Vec<_> = SortMode::ALL.iter().map(|m| (m.label().to_owned(), None, *m == self.sort, Msg::Sort(m.id().to_owned()))).collect();
 		html::div()
@@ -1565,6 +1594,7 @@ impl App {
 			.child(self.rail_toggle())
 			.child(dd(Menu::Show, "Show", format!("{} ({tab_n})", self.tab.label()), show_items))
 			.child(dd(Menu::Project, "Project", self.project.clone().unwrap_or_else(|| "All projects".to_owned()), project_items))
+			.child(dd(Menu::Repo, "Repo", repo_value, repo_items))
 			.child(dd(Menu::Status, "Status", self.status.label().to_owned(), status_items))
 			.child(dd(Menu::Sort, "Sort", self.sort.label().to_owned(), sort_items))
 	}
@@ -2674,6 +2704,11 @@ impl App {
 			Msg::Project(n) => {
 				self.menu = None;
 				self.project = n;
+				self.fix_selection();
+			},
+			Msg::Repo(id) => {
+				self.menu = None;
+				self.repo = id;
 				self.fix_selection();
 			},
 			Msg::Status(id) => {
