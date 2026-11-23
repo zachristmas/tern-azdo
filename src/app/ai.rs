@@ -289,7 +289,7 @@ impl App {
 					m.settings.prompts.insert(m.kind.id().to_owned(), text.trim_end().to_owned());
 				}
 			},
-			Section::Agent => m.settings.agent = if text.trim().is_empty() { review::DEFAULT_AGENT.into() } else { text.trim().to_owned() },
+			Section::Agent => m.settings.agent = if text.trim().is_empty() { review::default_agent().into() } else { text.trim().to_owned() },
 			_ => return,
 		}
 		if self.ai_persist()
@@ -531,7 +531,7 @@ impl App {
 			},
 			Section::Agent => {
 				body = body.child(html::div().class("apt").child(html::span(format!("The agent for {repo}"))));
-				body = body.child(html::div().class("dim aph").child(html::span("claude, codex, or a command line; {prompt} marks where the prompt goes (else it is the last argument)")));
+				body = body.child(html::div().class("dim aph").child(html::span("omp, claude, codex, or a command line; {prompt} marks where the prompt goes (else it is the last argument)")));
 				body = body.children(editor(2));
 				foot = foot
 					.child(html::span("Enter saves").class("dim"))

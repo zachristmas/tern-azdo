@@ -3,7 +3,17 @@
 
 use std::path::Path;
 
-pub const DEFAULT_AGENT: &str = "claude";
+/// The agent when none is set: `omp` when it is on the PATH, else `claude`. Looked up once.
+pub fn default_agent() -> &'static str {
+	static AGENT: std::sync::LazyLock<&str> = std::sync::LazyLock::new(|| if on_path("omp") { "omp" } else { "claude" });
+	*AGENT
+}
+
+/// Whether `program` is in a folder on the PATH, as `program.exe` on Windows (what starting it by name finds there).
+fn on_path(program: &str) -> bool {
+	let file = if cfg!(windows) { format!("{program}.exe") } else { program.to_owned() };
+	std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(&file).is_file()))
+}
 
 /// What the agent is asked to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,11 +261,11 @@ pub fn for_launch(prompt: &str, tag: &str) -> anyhow::Result<(String, bool)> {
 }
 
 /// The program and arguments for an agent setting: a command line split on spaces, with `{prompt}` replaced by the
-/// prompt (one argument) or the prompt appended. `claude` and `codex` take the prompt as their first argument.
+/// prompt (one argument) or the prompt appended. `omp`, `claude` and `codex` take the prompt as their first argument.
 pub fn argv(agent: &str, prompt: &str) -> Vec<String> {
 	let mut parts: Vec<String> = agent.split_whitespace().map(str::to_owned).collect();
 	if parts.is_empty() {
-		parts.push(DEFAULT_AGENT.to_owned());
+		parts.push(default_agent().to_owned());
 	}
 	if parts.iter().any(|p| p.contains("{prompt}")) {
 		parts.iter().map(|p| p.replace("{prompt}", prompt)).collect()
@@ -378,7 +388,13 @@ mod tests {
 	fn the_prompt_is_one_argument() {
 		assert_eq!(argv("claude", "a b\nc"), ["claude", "a b\nc"]);
 		assert_eq!(argv("codex --model x {prompt}", "p q"), ["codex", "--model", "x", "p q"]);
-		assert_eq!(argv("  ", "p"), ["claude", "p"]);
+		assert_eq!(argv("  ", "p"), [default_agent(), "p"]);
+	}
+
+	#[test]
+	fn finds_programs_on_the_path() {
+		assert!(on_path(if cfg!(windows) { "cmd" } else { "sh" }));
+		assert!(!on_path("tern-azdo-no-such-program"));
 	}
 
 	#[test]
