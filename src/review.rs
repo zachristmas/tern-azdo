@@ -15,6 +15,9 @@ fn on_path(program: &str) -> bool {
 	std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(&file).is_file()))
 }
 
+/// The agents the AI settings offer by name. Any other command line works too.
+pub const AGENTS: [&str; 3] = ["omp", "claude", "codex"];
+
 /// What the agent is asked to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
